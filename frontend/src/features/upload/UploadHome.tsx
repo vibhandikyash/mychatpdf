@@ -8,9 +8,10 @@ import { UploadDropzone } from "./UploadDropzone";
 interface UploadHomeProps {
   documents: DocumentSummary[];
   onOpenDocument: (documentId: string) => void;
+  onUploadFile?: (file: File) => Promise<void> | void;
 }
 
-export function UploadHome({ documents, onOpenDocument }: UploadHomeProps) {
+export function UploadHome({ documents, onOpenDocument, onUploadFile }: UploadHomeProps) {
   const [acceptedFile, setAcceptedFile] = useState<File | null>(null);
   const recentDocuments = documents.slice(0, 3);
   const processingDocuments = documents.filter((document) => isProcessingStatus(document.status));
@@ -27,7 +28,13 @@ export function UploadHome({ documents, onOpenDocument }: UploadHomeProps) {
             </p>
           </section>
 
-          <UploadDropzone onAccepted={setAcceptedFile} initialProgress={68} />
+          <UploadDropzone
+            onAccepted={(file) => {
+              setAcceptedFile(file);
+              void onUploadFile?.(file);
+            }}
+            initialProgress={68}
+          />
 
           {acceptedFile ? (
             <div role="status" aria-label="Upload accepted" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">

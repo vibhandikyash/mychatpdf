@@ -1,14 +1,23 @@
-import { ReactNode, useMemo, useState } from "react";
-import { ClerkProvider, UserButton } from "@clerk/clerk-react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ClerkProvider, UserButton, useAuth } from "@clerk/clerk-react";
 import { FilePlus2, FileText, Library, Menu, Settings, X } from "lucide-react";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { AuthPage } from "./features/auth/AuthPages";
+import { createAuthenticatedApiClient } from "./api/client";
+import {
+  deleteDocument,
+  getDocumentChat,
+  getDocumentFileUrl,
+  listDocuments,
+  retryDocumentProcessing,
+  uploadDocument
+} from "./api/documents";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";
 import { DocumentLibrary } from "./features/documents/DocumentLibrary";
 import { DocumentWorkspace } from "./features/documents/DocumentWorkspace";
 import { UploadHome } from "./features/upload/UploadHome";
 import { mockDocuments, mockMessages, mockWorkspaceDocument } from "./mocks/documents";
-import { DocumentSummary } from "./types";
+import { DocumentSummary, WorkspaceDocument } from "./types";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
@@ -209,18 +218,99 @@ function NavItem({
 
 function HomeRoute() {
   const navigate = useNavigate();
-  return <UploadHome documents={mockDocuments} onOpenDocument={(documentId) => navigate(documentId === "documents" ? "/app/documents" : `/app/documents/${documentId}`)} />;
+  const api = useAuthenticatedApiClient();
+  const [documents, setDocuments] = useState(mockDocuments);
+
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    void listDocuments(api).then(setDocuments).catch(() => undefined);
+  }, [api]);
+
+  async function onUploadFile(file: File) {
+    if (!api) {
+      return;
+    }
+
+    const result = await uploadDocument(api, file);
+    navigate(`/app/documents/${result.documentId}`);
+  }
+
+  return (
+    <UploadHome
+      documents={documents}
+      onUploadFile={onUploadFile}
+      onOpenDocument={(documentId) => navigate(documentId === "documents" ? "/app/documents" : `/app/documents/${documentId}`)}
+    />
+  );
 }
 
 function LibraryRoute() {
   const navigate = useNavigate();
-  return <DocumentLibrary documents={mockDocuments} onOpen={(documentId) => navigate(`/app/documents/${documentId}`)} />;
+  const api = useAuthenticatedApiClient();
+  const [documents, setDocuments] = useState(mockDocuments);
+
+  async function refreshDocuments() {
+    if (!api) {
+      return;
+    }
+
+    setDocuments(await listDocuments(api));
+  }
+
+  useEffect(() => {
+    void refreshDocuments().catch(() => undefined);
+  }, [api]);
+
+  return (
+    <DocumentLibrary
+      documents={documents}
+      onOpen={(documentId) => navigate(`/app/documents/${documentId}`)}
+      onDelete={(documentId) => {
+        if (!api) {
+          return;
+        }
+        void deleteDocument(api, documentId).then(refreshDocuments).catch(() => undefined);
+      }}
+      onRetry={(documentId) => {
+        if (!api) {
+          return;
+        }
+        void retryDocumentProcessing(api, documentId).then(refreshDocuments).catch(() => undefined);
+      }}
+    />
+  );
 }
 
 function WorkspaceRoute() {
   const { documentId } = useParams();
-  const document = useMemo(() => findWorkspaceDocument(documentId), [documentId]);
-  return <DocumentWorkspace document={document} messages={mockMessages} />;
+  const api = useAuthenticatedApiClient();
+  const [document, setDocument] = useState<WorkspaceDocument>(() => findWorkspaceDocument(documentId));
+  const [messages, setMessages] = useState(mockMessages);
+
+  useEffect(() => {
+    if (!api || !documentId) {
+      return;
+    }
+
+    void Promise.all([
+      listDocuments(api),
+      getDocumentChat(api, documentId).catch(() => mockMessages),
+      getDocumentFileUrl(api, documentId).catch(() => undefined)
+    ])
+      .then(([documents, chatMessages, fileUrl]) => {
+        const currentDocument = documents.find((item) => item.id === documentId);
+        if (currentDocument) {
+          setDocument({ ...currentDocument, signedPdfUrl: fileUrl?.url });
+        }
+        setMessages(chatMessages);
+      })
+      .catch(() => undefined);
+  }, [api, documentId]);
+
+  return <DocumentWorkspace document={document} messages={messages} />;
 }
 
 function SettingsRoute() {
@@ -235,7 +325,17 @@ function SettingsRoute() {
   );
 }
 
-function findWorkspaceDocument(documentId?: string): DocumentSummary {
+function findWorkspaceDocument(documentId?: string): WorkspaceDocument {
   return mockDocuments.find((document) => document.id === documentId) ?? mockWorkspaceDocument;
 }
 
+function useAuthenticatedApiClient() {
+  const { getToken } = useAuth();
+  return useMemo(() => {
+    if (!clerkPublishableKey) {
+      return null;
+    }
+
+    return createAuthenticatedApiClient(getToken);
+  }, [getToken]);
+}
