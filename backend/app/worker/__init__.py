@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.services.processing import PdfTextExtractor, process_document
+from app.services.storage import get_storage_service
 from app.services.vector import get_vector_service
 
 QUEUE_NAME = "mychatpdf"
@@ -33,6 +34,6 @@ def _process_document_with_defaults(db: Session, document_id: UUID, settings: Se
     process_document(
         db,
         document_id,
-        extractor=PdfTextExtractor(),
+        extractor=PdfTextExtractor(get_storage_service(settings)),
         vector_service=get_vector_service(settings),
     )

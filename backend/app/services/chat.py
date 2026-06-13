@@ -1,10 +1,20 @@
 import json
 from collections.abc import Iterator
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Chat, Document, DocumentStatus, Message, MessageRole, MessageStatus, User
+from app.models import (
+    Chat,
+    Document,
+    DocumentStatus,
+    Message,
+    MessageRole,
+    MessageSource,
+    MessageStatus,
+    User,
+)
 from app.models.mixins import utc_now
 from app.services.vector import VectorService
 
@@ -49,8 +59,8 @@ def stream_chat_response(
         document_id=document.id,
         chat_id=chat.id,
         role=MessageRole.ASSISTANT,
-        status=MessageStatus.SUCCEEDED,
-        content="The document does not provide enough information yet.",
+        status=MessageStatus.PENDING,
+        content="",
         created_at=utc_now(),
     )
     db.add_all([user_message, assistant_message])
@@ -58,8 +68,28 @@ def stream_chat_response(
     db.refresh(assistant_message)
 
     sources = vector_service.query_document(user, document, content)
+    answer_parts: list[str] = []
     yield format_sse("message_start", {"message_id": str(assistant_message.id)})
-    yield format_sse("token", {"text": assistant_message.content})
+    for token in vector_service.stream_answer_tokens(content, sources):
+        answer_parts.append(token)
+        yield format_sse("token", {"text": token})
+
+    assistant_message.content = "".join(answer_parts)
+    assistant_message.status = MessageStatus.SUCCEEDED
+    for rank, source in enumerate(sources, start=1):
+        db.add(
+            MessageSource(
+                message_id=assistant_message.id,
+                document_id=document.id,
+                chunk_id=UUID(source.chunk_id),
+                page_start=source.page_start,
+                page_end=source.page_end,
+                excerpt=source.excerpt,
+                score=source.score,
+                rank=rank,
+            )
+        )
+    db.commit()
     yield format_sse(
         "sources",
         {

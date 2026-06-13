@@ -33,6 +33,22 @@ class StorageService:
             ContentType=content_type,
         )
 
+    def download_pdf(self, document: Document) -> bytes:
+        if not self._has_wasabi_credentials:
+            return b""
+
+        import boto3
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=self.settings.wasabi_endpoint_url,
+            region_name=self.settings.wasabi_region,
+            aws_access_key_id=self.settings.wasabi_access_key_id,
+            aws_secret_access_key=self.settings.wasabi_secret_access_key,
+        )
+        response = client.get_object(Bucket=document.wasabi_bucket, Key=document.wasabi_object_key)
+        return response["Body"].read()
+
     def signed_file_url(self, document: Document) -> dict[str, str]:
         expires_at = utc_now() + timedelta(seconds=self.settings.signed_url_ttl_seconds)
         if self._has_wasabi_credentials:

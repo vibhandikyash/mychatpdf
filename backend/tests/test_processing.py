@@ -1,5 +1,6 @@
 from app.models import Document, DocumentStatus, ProcessingJob, ProcessingJobStatus, User
-from app.services.processing import NoExtractableTextError, process_document
+from app.models import DocumentChunk
+from app.services.processing import ExtractedPage, NoExtractableTextError, process_document
 
 
 class NoTextExtractor:
@@ -13,6 +14,32 @@ class UnusedVectorService:
 
     def upsert_document_chunks(self, _user, _document, _chunks, _vectors):
         raise AssertionError("indexing should not run without extracted text")
+
+
+class TextExtractor:
+    def extract_pages(self, _document):
+        return [
+            ExtractedPage(page_number=1, text=" First page with useful text. "),
+            ExtractedPage(page_number=2, text="Second page with more useful text."),
+        ]
+
+
+class RecordingVectorService:
+    def __init__(self):
+        self.upserted = []
+
+    def embed_texts(self, texts):
+        return [[float(index)] for index, _text in enumerate(texts)]
+
+    def upsert_document_chunks(self, user, document, chunks, vectors):
+        self.upserted.append(
+            {
+                "user_id": user.id,
+                "document_id": document.id,
+                "chunk_count": len(list(chunks)),
+                "vector_count": len(vectors),
+            }
+        )
 
 
 def test_no_text_processing_marks_document_and_job_failed(db_session):
@@ -54,3 +81,50 @@ def test_no_text_processing_marks_document_and_job_failed(db_session):
     assert "text-based PDFs" in document.failure_message
     assert job.status == ProcessingJobStatus.FAILED
     assert job.error_code == "no_extractable_text"
+
+
+def test_text_processing_stores_chunks_indexes_vectors_and_marks_ready(db_session):
+    user = User(clerk_user_id="user_ready", email="ready@example.com")
+    document = Document(
+        user=user,
+        original_filename="text.pdf",
+        content_type="application/pdf",
+        file_size_bytes=200,
+        status=DocumentStatus.UPLOADED,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pdf",
+        pinecone_namespace="test",
+    )
+    job = ProcessingJob(
+        user=user,
+        document=document,
+        status=ProcessingJobStatus.QUEUED,
+        current_step="queued",
+    )
+    db_session.add_all([user, document, job])
+    db_session.commit()
+    vector_service = RecordingVectorService()
+
+    process_document(
+        db_session,
+        document.id,
+        extractor=TextExtractor(),
+        vector_service=vector_service,
+    )
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+    chunks = db_session.query(DocumentChunk).order_by(DocumentChunk.chunk_index).all()
+
+    assert document.status == DocumentStatus.READY
+    assert document.chunk_count == 2
+    assert job.status == ProcessingJobStatus.SUCCEEDED
+    assert [chunk.page_start for chunk in chunks] == [1, 2]
+    assert vector_service.upserted == [
+        {
+            "user_id": user.id,
+            "document_id": document.id,
+            "chunk_count": 2,
+            "vector_count": 2,
+        }
+    ]

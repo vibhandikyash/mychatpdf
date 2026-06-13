@@ -1,4 +1,4 @@
-from app.models import Chat, Document, DocumentStatus, User
+from app.models import Chat, Document, DocumentChunk, DocumentStatus, MessageSource, User
 
 
 def test_get_chat_creates_empty_chat_for_owned_document(authenticated_client, db_session):
@@ -62,6 +62,51 @@ def test_chat_stream_emits_phase_1_sse_event_names(authenticated_client, db_sess
     assert "event: token" in body
     assert "event: sources" in body
     assert "event: message_done" in body
+
+
+def test_chat_stream_persists_retrieved_sources(authenticated_client, db_session):
+    user = User(
+        clerk_user_id="user_2abc123",
+        email="casey@example.com",
+        name="Casey Example",
+    )
+    document = Document(
+        user=user,
+        original_filename="paper.pdf",
+        content_type="application/pdf",
+        file_size_bytes=100,
+        status=DocumentStatus.READY,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pdf",
+        pinecone_namespace="test",
+    )
+    chunk = DocumentChunk(
+        user=user,
+        document=document,
+        chunk_index=0,
+        page_start=7,
+        page_end=7,
+        text="Pipeline quality improved in regulated industries.",
+        text_excerpt="Pipeline quality improved in regulated industries.",
+        pinecone_vector_id="doc_chunk_0",
+    )
+    db_session.add_all([user, document, chunk])
+    db_session.commit()
+
+    with authenticated_client.stream(
+        "POST",
+        f"/api/documents/{document.id}/chat/stream",
+        json={"content": "What improved?"},
+    ) as response:
+        body = response.read().decode("utf-8")
+
+    assert response.status_code == 200
+    assert "Pipeline quality improved" in body
+
+    source = db_session.query(MessageSource).one()
+    assert source.chunk_id == chunk.id
+    assert source.page_start == 7
+    assert source.rank == 1
 
 
 def test_chat_stream_for_non_ready_document_returns_error_event(

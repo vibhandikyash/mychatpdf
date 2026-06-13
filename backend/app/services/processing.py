@@ -26,9 +26,25 @@ class ExtractedPage:
 
 
 class PdfTextExtractor:
+    def __init__(self, storage_service=None):
+        self.storage_service = storage_service
+
     def extract_pages(self, document: Document) -> list[ExtractedPage]:
-        _ = document
-        return []
+        if self.storage_service is None:
+            return []
+
+        import fitz
+
+        pdf_bytes = self.storage_service.download_pdf(document)
+        if not pdf_bytes:
+            return []
+
+        pages: list[ExtractedPage] = []
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf:
+            document.page_count = pdf.page_count
+            for index, page in enumerate(pdf, start=1):
+                pages.append(ExtractedPage(page_number=index, text=page.get_text("text")))
+        return pages
 
 
 def chunk_pages(document: Document, pages: list[ExtractedPage]) -> list[DocumentChunk]:
