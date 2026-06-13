@@ -1,3 +1,4 @@
+from functools import lru_cache
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -10,6 +11,11 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.models import Document, User
+
+
+@lru_cache(maxsize=8)
+def get_clerk_jwks_client(jwks_url: str, timeout_seconds: int) -> PyJWKClient:
+    return PyJWKClient(jwks_url, timeout=timeout_seconds)
 
 
 async def get_current_clerk_claims(
@@ -32,7 +38,10 @@ async def get_current_clerk_claims(
         )
 
     try:
-        jwks_client = PyJWKClient(settings.clerk_jwks_url)
+        jwks_client = get_clerk_jwks_client(
+            settings.clerk_jwks_url,
+            settings.clerk_jwks_timeout_seconds,
+        )
         signing_key = jwks_client.get_signing_key_from_jwt(token)
         decode_kwargs: dict[str, Any] = {
             "algorithms": ["RS256"],

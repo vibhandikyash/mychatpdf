@@ -8,12 +8,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         extra="ignore",
     )
 
     database_url: str = "sqlite+pysqlite:///./mychatpdf.db"
     clerk_issuer: str = ""
     clerk_jwks_url: str = ""
+    clerk_jwks_timeout_seconds: int = Field(default=5, ge=1)
     clerk_audience: str | None = None
     frontend_origin: str | AnyHttpUrl = "http://localhost:5173"
 

@@ -1,4 +1,18 @@
+import asyncio
+
+import jwt
+import pytest
+
+from app.api.deps import get_clerk_jwks_client, get_current_clerk_claims
+from app.core.config import Settings
 from app.models import User
+
+
+@pytest.fixture(autouse=True)
+def clear_clerk_jwks_client_cache():
+    get_clerk_jwks_client.cache_clear()
+    yield
+    get_clerk_jwks_client.cache_clear()
 
 
 def test_me_rejects_missing_authorization(client):
@@ -6,6 +20,66 @@ def test_me_rejects_missing_authorization(client):
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Not authenticated"
+
+
+def test_clerk_jwks_client_uses_configured_timeout(monkeypatch):
+    calls = []
+
+    class FakeJwksClient:
+        def __init__(self, url, timeout=None):
+            calls.append({"url": url, "timeout": timeout})
+
+        def get_signing_key_from_jwt(self, _token):
+            raise jwt.PyJWTError("stop after construction")
+
+    monkeypatch.setattr("app.api.deps.PyJWKClient", FakeJwksClient)
+    settings = Settings(
+        clerk_issuer="https://example.clerk.accounts.dev",
+        clerk_jwks_url="https://example.clerk.accounts.dev/.well-known/jwks.json",
+        clerk_jwks_timeout_seconds=3,
+    )
+
+    with pytest.raises(Exception):
+        asyncio.run(get_current_clerk_claims("Bearer token", settings))
+
+    assert calls == [
+        {
+            "url": "https://example.clerk.accounts.dev/.well-known/jwks.json",
+            "timeout": 3,
+        }
+    ]
+
+
+def test_clerk_jwks_client_is_reused_between_auth_checks(monkeypatch):
+    calls = []
+
+    class FakeSigningKey:
+        key = "public-key"
+
+    class FakeJwksClient:
+        def __init__(self, url, timeout=None):
+            calls.append({"url": url, "timeout": timeout})
+
+        def get_signing_key_from_jwt(self, _token):
+            return FakeSigningKey()
+
+    monkeypatch.setattr("app.api.deps.PyJWKClient", FakeJwksClient)
+    monkeypatch.setattr("app.api.deps.jwt.decode", lambda *args, **kwargs: {"sub": "user_2abc123"})
+    settings = Settings(
+        clerk_issuer="https://example.clerk.accounts.dev",
+        clerk_jwks_url="https://example.clerk.accounts.dev/.well-known/jwks.json",
+        clerk_jwks_timeout_seconds=3,
+    )
+
+    asyncio.run(get_current_clerk_claims("Bearer token", settings))
+    asyncio.run(get_current_clerk_claims("Bearer token", settings))
+
+    assert calls == [
+        {
+            "url": "https://example.clerk.accounts.dev/.well-known/jwks.json",
+            "timeout": 3,
+        }
+    ]
 
 
 def test_me_creates_local_user_from_clerk_claims(authenticated_client, db_session):
