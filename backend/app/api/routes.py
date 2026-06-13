@@ -99,7 +99,7 @@ def _validate_pdf_upload(file: UploadFile, content: bytes, settings: Settings) -
     max_bytes = settings.max_upload_mb * 1024 * 1024
     if len(content) > max_bytes:
         raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="PDF exceeds the configured upload limit",
         )
 
@@ -113,7 +113,7 @@ async def _read_pdf_upload(file: UploadFile, max_bytes: int) -> bytes:
         chunks.extend(chunk)
         if len(chunks) > max_bytes:
             raise HTTPException(
-                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="PDF exceeds the configured upload limit",
             )
     return bytes(chunks)
@@ -131,7 +131,7 @@ async def upload_document(
     parsed_content_length = int(content_length) if content_length and content_length.isdigit() else None
     if parsed_content_length is not None and parsed_content_length > max_bytes:
         raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="PDF exceeds the configured upload limit",
         )
 
