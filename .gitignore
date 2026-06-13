@@ -27,3 +27,4 @@ coverage/
 .worktrees/
 tmp/
 uploads/
+*.db
