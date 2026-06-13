@@ -223,3 +223,53 @@ def test_delete_document_vectors_uses_stored_vector_ids(db_session, monkeypatch)
         {"index": "mychatpdf"},
         {"ids": ["vec-1", "vec-2"], "namespace": "phase1"},
     ]
+
+
+def _retry_settings():
+    return Settings(
+        _env_file=None,
+        openai_api_key="sk-test",
+        openai_request_max_retries=3,
+        openai_retry_initial_seconds=0,
+    )
+
+
+class _Transient(Exception):
+    status_code = 503
+
+
+class _Permanent(Exception):
+    status_code = 401
+
+
+def test_retry_recovers_after_transient_errors():
+    attempts = {"n": 0}
+
+    def operation():
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise _Transient("temporary")
+        return "ok"
+
+    result = VectorService(_retry_settings(), sleeper=lambda _d: None)._retry_openai_request(operation)
+
+    assert result == "ok"
+    assert attempts["n"] == 3
+
+
+def test_retry_does_not_retry_permanent_errors():
+    attempts = {"n": 0}
+
+    def operation():
+        attempts["n"] += 1
+        raise _Permanent("bad key")
+
+    service = VectorService(_retry_settings(), sleeper=lambda _d: None)
+    try:
+        service._retry_openai_request(operation)
+        raised = False
+    except _Permanent:
+        raised = True
+
+    assert raised is True
+    assert attempts["n"] == 1

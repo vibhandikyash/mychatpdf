@@ -1,16 +1,31 @@
-from collections.abc import Generator
+import os
 
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+# Isolate the test suite from any real .env / shell credentials BEFORE the app
+# modules import (app.db.session builds its engine at import time from settings).
+# This keeps `pytest` hermetic: no postgres driver requirement, no live
+# OpenAI/Pinecone/Wasabi calls, regardless of a configured .env.
+os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
+for _key in (
+    "OPENAI_API_KEY",
+    "PINECONE_API_KEY",
+    "WASABI_ACCESS_KEY_ID",
+    "WASABI_SECRET_ACCESS_KEY",
+):
+    os.environ.pop(_key, None)
 
-from app.api.deps import get_current_clerk_claims
-from app.core.config import Settings, get_settings
-from app.db.base import Base
-from app.db.session import get_db
-from app.main import create_app
+from collections.abc import Generator  # noqa: E402
+
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
+
+from app.api.deps import get_current_clerk_claims  # noqa: E402
+from app.core.config import Settings, get_settings  # noqa: E402
+from app.db.base import Base  # noqa: E402
+from app.db.session import get_db  # noqa: E402
+from app.main import create_app  # noqa: E402
 
 
 @pytest.fixture
@@ -37,11 +52,18 @@ def db_session() -> Generator[Session, None, None]:
 @pytest.fixture
 def app(db_session: Session):
     settings = Settings(
+        _env_file=None,
         database_url="sqlite+pysqlite:///:memory:",
         clerk_issuer="https://example.clerk.accounts.dev",
         clerk_jwks_url="https://example.clerk.accounts.dev/.well-known/jwks.json",
         clerk_audience="mychatpdf-test",
         frontend_origin="http://localhost:5173",
+        # Force the no-credential code paths so tests never touch live
+        # OpenAI/Pinecone/Wasabi even when a real .env or shell env is present.
+        openai_api_key=None,
+        pinecone_api_key=None,
+        wasabi_access_key_id=None,
+        wasabi_secret_access_key=None,
     )
     app = create_app(settings)
 

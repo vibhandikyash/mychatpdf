@@ -1,6 +1,8 @@
 from io import BytesIO
 from uuid import UUID, uuid4
 
+from fastapi.testclient import TestClient
+
 from app.models import Document, DocumentStatus, User
 
 
@@ -151,3 +153,80 @@ def test_retry_failed_document_enqueues_processing(authenticated_client, db_sess
 
     assert response.status_code == 200
     assert calls == [document.id]
+
+
+class _FailingStorage:
+    def upload_pdf(self, *_args, **_kwargs):
+        raise RuntimeError("wasabi down")
+
+    def delete_pdf(self, *_args, **_kwargs):
+        raise RuntimeError("wasabi down")
+
+
+def test_upload_storage_failure_returns_502_and_creates_no_document(
+    authenticated_client, db_session, monkeypatch
+):
+    monkeypatch.setattr("app.api.routes.get_storage_service", lambda _settings: _FailingStorage())
+
+    response = authenticated_client.post(
+        "/api/documents",
+        files={"file": ("paper.pdf", BytesIO(b"%PDF-1.7\ntext"), "application/pdf")},
+    )
+
+    assert response.status_code == 502
+    assert "store" in response.json()["detail"].lower()
+    # The document was flushed but never committed, so a rollback (which the
+    # real get_db performs on session close) discards it: no orphan record.
+    db_session.rollback()
+    assert db_session.query(Document).count() == 0
+
+
+def test_delete_is_resilient_to_external_cleanup_failure(
+    authenticated_client, db_session, monkeypatch
+):
+    user = User(clerk_user_id="user_2abc123", email="casey@example.com", name="Casey Example")
+    document = Document(
+        user=user,
+        original_filename="paper.pdf",
+        content_type="application/pdf",
+        file_size_bytes=100,
+        status=DocumentStatus.READY,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pdf",
+        pinecone_namespace="test",
+    )
+    db_session.add_all([user, document])
+    db_session.commit()
+
+    monkeypatch.setattr("app.api.routes.get_storage_service", lambda _settings: _FailingStorage())
+
+    def failing_vectors(_settings):
+        class _V:
+            def delete_document_vectors(self, *_a, **_k):
+                raise RuntimeError("pinecone down")
+
+        return _V()
+
+    monkeypatch.setattr("app.api.routes.get_vector_service", failing_vectors)
+
+    response = authenticated_client.delete(f"/api/documents/{document.id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "deleting"
+    db_session.refresh(document)
+    assert document.status == DocumentStatus.DELETING
+    assert document.deleted_at is not None
+
+
+def test_unhandled_error_returns_sanitized_500(app, authenticated_client, monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("unexpected boom with secret details")
+
+    monkeypatch.setattr("app.api.routes.get_owned_document", boom)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get(f"/api/documents/{uuid4()}")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal server error"}
+    assert "secret" not in response.text

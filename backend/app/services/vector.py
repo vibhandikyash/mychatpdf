@@ -41,14 +41,33 @@ class VectorService:
 
         return [[0.0] for _ in texts]
 
+    @staticmethod
+    def _is_retryable_openai_error(exc: Exception) -> bool:
+        # Retry transient/unknown failures, but never retry permanent client
+        # errors (auth, bad request, not found, etc.) which can never recover.
+        # Rate limits (429) remain retryable.
+        if type(exc).__name__ in {
+            "AuthenticationError",
+            "PermissionDeniedError",
+            "BadRequestError",
+            "NotFoundError",
+            "ConflictError",
+            "UnprocessableEntityError",
+        }:
+            return False
+        status_code = getattr(exc, "status_code", None)
+        if isinstance(status_code, int) and 400 <= status_code < 500 and status_code != 429:
+            return False
+        return True
+
     def _retry_openai_request(self, operation):
         delay = self.settings.openai_retry_initial_seconds
         max_attempts = self.settings.openai_request_max_retries
         for attempt in range(1, max_attempts + 1):
             try:
                 return operation()
-            except Exception:
-                if attempt >= max_attempts:
+            except Exception as exc:
+                if attempt >= max_attempts or not self._is_retryable_openai_error(exc):
                     raise
                 if delay:
                     self.sleeper(delay)

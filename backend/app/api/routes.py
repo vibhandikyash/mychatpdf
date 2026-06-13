@@ -99,7 +99,7 @@ def _validate_pdf_upload(file: UploadFile, content: bytes, settings: Settings) -
     max_bytes = settings.max_upload_mb * 1024 * 1024
     if len(content) > max_bytes:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail="PDF exceeds the configured upload limit",
         )
 
@@ -113,7 +113,7 @@ async def _read_pdf_upload(file: UploadFile, max_bytes: int) -> bytes:
         chunks.extend(chunk)
         if len(chunks) > max_bytes:
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail="PDF exceeds the configured upload limit",
             )
     return bytes(chunks)
@@ -131,7 +131,7 @@ async def upload_document(
     parsed_content_length = int(content_length) if content_length and content_length.isdigit() else None
     if parsed_content_length is not None and parsed_content_length > max_bytes:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail="PDF exceeds the configured upload limit",
         )
 
@@ -153,7 +153,18 @@ async def upload_document(
     document.wasabi_object_key = build_document_object_key(current_user.id, document.id)
 
     storage_service = get_storage_service(settings)
-    storage_service.upload_pdf(document.wasabi_object_key, content, document.content_type)
+    try:
+        storage_service.upload_pdf(document.wasabi_object_key, content, document.content_type)
+    except Exception:
+        # Nothing is committed yet, so the flushed document is discarded on session close.
+        logger.exception(
+            "Failed to store uploaded PDF",
+            extra={"document_id": str(document.id), "user_id": str(current_user.id)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to store the uploaded file. Please try again.",
+        )
 
     job = ProcessingJob(
         user_id=current_user.id,
@@ -195,9 +206,20 @@ def delete_document(
     document = get_owned_document(db, current_user, document_id)
     document.status = DocumentStatus.DELETING
     document.deleted_at = utc_now()
-    get_storage_service(settings).delete_pdf(document)
-    get_vector_service(settings).delete_document_vectors(current_user, document)
+
+    # Best-effort external cleanup: a third-party failure must not block the
+    # soft-delete or leak a 500. Orphans are logged for ops follow-up.
+    try:
+        get_storage_service(settings).delete_pdf(document)
+    except Exception:
+        logger.exception("Failed to delete PDF from storage", extra={"document_id": str(document.id)})
+    try:
+        get_vector_service(settings).delete_document_vectors(current_user, document)
+    except Exception:
+        logger.exception("Failed to delete document vectors", extra={"document_id": str(document.id)})
+
     db.commit()
+    logger.info("Document deleted", extra={"document_id": str(document.id), "user_id": str(current_user.id)})
     return {"status": DocumentStatus.DELETING.value}
 
 
