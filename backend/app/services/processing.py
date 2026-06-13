@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import logging
+import re
 from uuid import UUID
 
 from sqlalchemy import delete
@@ -16,6 +17,8 @@ from app.models.mixins import utc_now
 from app.services.vector import VectorService
 
 logger = logging.getLogger(__name__)
+DEFAULT_CHUNK_TARGET_TOKENS = 1000
+DEFAULT_CHUNK_OVERLAP_TOKENS = 150
 
 
 class NoExtractableTextError(RuntimeError):
@@ -54,25 +57,46 @@ class PdfTextExtractor:
         return pages
 
 
-def chunk_pages(document: Document, pages: list[ExtractedPage]) -> list[DocumentChunk]:
+def _text_tokens(text: str) -> list[str]:
+    return re.findall(r"\S+", text)
+
+
+def chunk_pages(
+    document: Document,
+    pages: list[ExtractedPage],
+    *,
+    target_tokens: int = DEFAULT_CHUNK_TARGET_TOKENS,
+    overlap_tokens: int = DEFAULT_CHUNK_OVERLAP_TOKENS,
+) -> list[DocumentChunk]:
     chunks: list[DocumentChunk] = []
-    for index, page in enumerate(pages):
-        text = " ".join(page.text.split())
-        if not text:
+    chunk_index = 0
+    for page in pages:
+        tokens = _text_tokens(page.text)
+        if not tokens:
             continue
-        chunks.append(
-            DocumentChunk(
-                user_id=document.user_id,
-                document_id=document.id,
-                chunk_index=index,
-                page_start=page.page_number,
-                page_end=page.page_number,
-                text=text,
-                text_excerpt=text[:500],
-                token_count=None,
-                pinecone_vector_id=f"doc_{document.id}_chunk_{index}",
+
+        start = 0
+        step = max(1, target_tokens - overlap_tokens)
+        while start < len(tokens):
+            window = tokens[start : start + target_tokens]
+            text = " ".join(window)
+            chunks.append(
+                DocumentChunk(
+                    user_id=document.user_id,
+                    document_id=document.id,
+                    chunk_index=chunk_index,
+                    page_start=page.page_number,
+                    page_end=page.page_number,
+                    text=text,
+                    text_excerpt=text[:500],
+                    token_count=len(window),
+                    pinecone_vector_id=f"doc_{document.id}_chunk_{chunk_index}",
+                )
             )
-        )
+            chunk_index += 1
+            if start + target_tokens >= len(tokens):
+                break
+            start += step
     return chunks
 
 

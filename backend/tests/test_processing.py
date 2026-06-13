@@ -1,6 +1,7 @@
 from app.models import Document, DocumentStatus, ProcessingJob, ProcessingJobStatus, User
 from app.models import DocumentChunk
 from app.services.processing import ExtractedPage, MaxPagesExceededError, NoExtractableTextError, process_document
+from app.services.processing import chunk_pages
 
 
 class NoTextExtractor:
@@ -136,6 +137,35 @@ def test_text_processing_stores_chunks_indexes_vectors_and_marks_ready(db_sessio
             "vector_count": 2,
         }
     ]
+
+
+def test_chunk_pages_splits_long_pages_with_token_overlap(db_session):
+    user = User(clerk_user_id="user_chunking", email="chunking@example.com")
+    document = Document(
+        user=user,
+        original_filename="long.pdf",
+        content_type="application/pdf",
+        file_size_bytes=200,
+        status=DocumentStatus.UPLOADED,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pdf",
+        pinecone_namespace="test",
+    )
+    db_session.add_all([user, document])
+    db_session.flush()
+    words = [f"term{i}" for i in range(1300)]
+
+    chunks = chunk_pages(
+        document,
+        [ExtractedPage(page_number=3, text=" ".join(words))],
+        target_tokens=1000,
+        overlap_tokens=150,
+    )
+
+    assert len(chunks) == 2
+    assert [chunk.token_count for chunk in chunks] == [1000, 450]
+    assert chunks[0].text.split()[-150:] == chunks[1].text.split()[:150]
+    assert [chunk.page_start for chunk in chunks] == [3, 3]
 
 
 def test_processing_fails_before_embedding_when_pdf_exceeds_page_limit(db_session):

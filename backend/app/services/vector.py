@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import time
 from typing import Iterable, Iterator
 
 from app.core.config import Settings
@@ -15,24 +16,43 @@ class RetrievedSource:
 
 
 class VectorService:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, sleeper=time.sleep):
         self.settings = settings
+        self.sleeper = sleeper
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if self.settings.openai_api_key:
             from openai import OpenAI
 
             client = OpenAI(api_key=self.settings.openai_api_key)
-            request: dict[str, object] = {
-                "model": self.settings.openai_embedding_model,
-                "input": texts,
-            }
-            if self.settings.openai_embedding_dimensions:
-                request["dimensions"] = self.settings.openai_embedding_dimensions
-            response = client.embeddings.create(**request)
-            return [item.embedding for item in response.data]
+            vectors: list[list[float]] = []
+            batch_size = self.settings.openai_embedding_batch_size
+            for start in range(0, len(texts), batch_size):
+                batch = texts[start : start + batch_size]
+                request: dict[str, object] = {
+                    "model": self.settings.openai_embedding_model,
+                    "input": batch,
+                }
+                if self.settings.openai_embedding_dimensions:
+                    request["dimensions"] = self.settings.openai_embedding_dimensions
+                response = self._retry_openai_request(lambda: client.embeddings.create(**request))
+                vectors.extend(item.embedding for item in response.data)
+            return vectors
 
         return [[0.0] for _ in texts]
+
+    def _retry_openai_request(self, operation):
+        delay = self.settings.openai_retry_initial_seconds
+        max_attempts = self.settings.openai_request_max_retries
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return operation()
+            except Exception:
+                if attempt >= max_attempts:
+                    raise
+                if delay:
+                    self.sleeper(delay)
+                    delay *= 2
 
     def upsert_document_chunks(
         self,

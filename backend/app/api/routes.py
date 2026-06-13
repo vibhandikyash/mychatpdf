@@ -88,6 +88,9 @@ def list_documents(
     return {"items": [_document_summary(document) for document in documents], "next_cursor": None}
 
 
+UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
+
+
 def _validate_pdf_upload(file: UploadFile, content: bytes, settings: Settings) -> None:
     filename = file.filename or ""
     if not filename.lower().endswith(".pdf") or file.content_type != "application/pdf":
@@ -101,22 +104,38 @@ def _validate_pdf_upload(file: UploadFile, content: bytes, settings: Settings) -
         )
 
 
+async def _read_pdf_upload(file: UploadFile, max_bytes: int) -> bytes:
+    chunks = bytearray()
+    while True:
+        chunk = await file.read(UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        chunks.extend(chunk)
+        if len(chunks) > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="PDF exceeds the configured upload limit",
+            )
+    return bytes(chunks)
+
+
 @router.post("/api/documents", status_code=status.HTTP_201_CREATED)
 async def upload_document(
     file: Annotated[UploadFile, File()],
-    content_length: Annotated[int | None, Header(alias="content-length")] = None,
+    content_length: Annotated[str | None, Header(alias="content-length")] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
     max_bytes = settings.max_upload_mb * 1024 * 1024
-    if content_length is not None and content_length > max_bytes:
+    parsed_content_length = int(content_length) if content_length and content_length.isdigit() else None
+    if parsed_content_length is not None and parsed_content_length > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="PDF exceeds the configured upload limit",
         )
 
-    content = await file.read()
+    content = await _read_pdf_upload(file, max_bytes)
     _validate_pdf_upload(file, content, settings)
 
     document = Document(

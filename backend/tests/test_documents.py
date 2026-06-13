@@ -33,6 +33,26 @@ def test_upload_rejects_oversized_pdf(authenticated_client, app):
     assert response.json()["detail"] == "PDF exceeds the configured upload limit"
 
 
+def test_upload_rejects_oversized_pdf_without_content_length(authenticated_client, app):
+    settings = app.state.settings
+    settings.max_upload_mb = 1
+
+    response = authenticated_client.post(
+        "/api/documents",
+        headers={"content-length": ""},
+        files={
+            "file": (
+                "large.pdf",
+                BytesIO(b"%PDF-" + b"x" * (1024 * 1024 + 1)),
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "PDF exceeds the configured upload limit"
+
+
 def test_upload_creates_document_and_processing_job(authenticated_client, db_session):
     response = authenticated_client.post(
         "/api/documents",

@@ -45,6 +45,76 @@ def test_embed_texts_passes_configured_openai_dimensions(monkeypatch):
     ]
 
 
+def test_embed_texts_batches_requests_and_preserves_order(monkeypatch):
+    calls = []
+
+    class FakeEmbeddings:
+        def create(self, **kwargs):
+            calls.append(kwargs["input"])
+
+            class FakeResponse:
+                data = [
+                    type("FakeEmbedding", (), {"embedding": [float(len(calls)), float(index)]})()
+                    for index, _text in enumerate(kwargs["input"])
+                ]
+
+            return FakeResponse()
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            self.api_key = api_key
+            self.embeddings = FakeEmbeddings()
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    settings = Settings(
+        openai_api_key="sk-test",
+        openai_embedding_batch_size=2,
+    )
+
+    vectors = VectorService(settings).embed_texts(["one", "two", "three"])
+
+    assert calls == [["one", "two"], ["three"]]
+    assert vectors == [[1.0, 0.0], [1.0, 1.0], [2.0, 0.0]]
+
+
+def test_embed_texts_retries_transient_openai_failures(monkeypatch):
+    attempts = 0
+    sleeps = []
+
+    class FakeEmbeddings:
+        def create(self, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("temporary")
+
+            class FakeEmbedding:
+                embedding = [0.4]
+
+            class FakeResponse:
+                data = [FakeEmbedding()]
+
+            return FakeResponse()
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            self.api_key = api_key
+            self.embeddings = FakeEmbeddings()
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    settings = Settings(
+        openai_api_key="sk-test",
+        openai_request_max_retries=2,
+        openai_retry_initial_seconds=0.25,
+    )
+
+    vectors = VectorService(settings, sleeper=sleeps.append).embed_texts(["hello"])
+
+    assert vectors == [[0.4]]
+    assert attempts == 2
+    assert sleeps == [0.25]
+
+
 def test_stream_answer_tokens_omits_temperature_by_default(monkeypatch):
     calls = []
 

@@ -152,7 +152,18 @@ function AppShell({ children, fullBleed = false }: AppShellProps) {
 }
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const recentDocuments: DocumentSummary[] = [];
+  const api = useAuthenticatedApiClient();
+  const [recentDocuments, setRecentDocuments] = useState<DocumentSummary[]>([]);
+
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    void listDocuments(api)
+      .then((documents) => setRecentDocuments(documents.slice(0, 4)))
+      .catch(() => setRecentDocuments([]));
+  }, [api]);
 
   return (
     <div className="flex h-full min-h-screen flex-col p-4">

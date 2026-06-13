@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_dimensions: int | None = Field(default=None, ge=1)
+    openai_embedding_batch_size: int = Field(default=64, ge=1, le=2048)
+    openai_request_max_retries: int = Field(default=3, ge=1, le=10)
+    openai_retry_initial_seconds: float = Field(default=0.5, ge=0)
     openai_chat_model: str = "gpt-4.1-mini"
     openai_chat_temperature: float | None = Field(default=None, ge=0, le=2)
 
