@@ -22,11 +22,12 @@ import { DocumentSummary, WorkspaceDocument } from "./types";
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 export function App() {
+  const navigate = useNavigate();
   const routes = (
     <Routes>
       <Route path="/" element={<Navigate to="/app" replace />} />
-      <Route path="/sign-in" element={<AuthPage mode="sign-in" />} />
-      <Route path="/sign-up" element={<AuthPage mode="sign-up" />} />
+      <Route path="/sign-in/*" element={<AuthPage mode="sign-in" />} />
+      <Route path="/sign-up/*" element={<AuthPage mode="sign-up" />} />
       <Route
         path="/app"
         element={
@@ -74,7 +75,19 @@ export function App() {
     return routes;
   }
 
-  return <ClerkProvider publishableKey={clerkPublishableKey}>{routes}</ClerkProvider>;
+  return (
+    <ClerkProvider
+      publishableKey={clerkPublishableKey}
+      routerPush={(to) => navigate(to)}
+      routerReplace={(to) => navigate(to, { replace: true })}
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
+      signInFallbackRedirectUrl="/app"
+      signUpFallbackRedirectUrl="/app"
+    >
+      {routes}
+    </ClerkProvider>
+  );
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
