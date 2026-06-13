@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     max_upload_mb: int = Field(default=20, ge=1)
     max_pdf_pages: int = Field(default=300, ge=1)
     redis_url: str = "redis://localhost:6379/0"
+    log_level: str = "INFO"
 
 
 @lru_cache

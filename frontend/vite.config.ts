@@ -6,6 +6,12 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    setupFiles: "./vitest.setup.ts"
+    setupFiles: "./vitest.setup.ts",
+    // Keep the suite hermetic: tests rely on a Clerk key being present
+    // (the app gates auth on it) without depending on a real .env.
+    env: {
+      VITE_CLERK_PUBLISHABLE_KEY: "pk_test_ci_dummy",
+      VITE_API_BASE_URL: "http://localhost:8000"
+    }
   }
 });
