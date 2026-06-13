@@ -21,9 +21,9 @@ node_modules/
 dist/
 coverage/
 .vite/
+*.tsbuildinfo
 
 # Local app data
 .worktrees/
 tmp/
 uploads/
-
