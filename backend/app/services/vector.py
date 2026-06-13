@@ -23,10 +23,13 @@ class VectorService:
             from openai import OpenAI
 
             client = OpenAI(api_key=self.settings.openai_api_key)
-            response = client.embeddings.create(
-                model=self.settings.openai_embedding_model,
-                input=texts,
-            )
+            request: dict[str, object] = {
+                "model": self.settings.openai_embedding_model,
+                "input": texts,
+            }
+            if self.settings.openai_embedding_dimensions:
+                request["dimensions"] = self.settings.openai_embedding_dimensions
+            response = client.embeddings.create(**request)
             return [item.embedding for item in response.data]
 
         return [[0.0] for _ in texts]
@@ -120,11 +123,10 @@ class VectorService:
             for index, source in enumerate(sources, start=1)
         )
         client = OpenAI(api_key=self.settings.openai_api_key)
-        stream = client.chat.completions.create(
-            model=self.settings.openai_chat_model,
-            temperature=0.1,
-            stream=True,
-            messages=[
+        request: dict[str, object] = {
+            "model": self.settings.openai_chat_model,
+            "stream": True,
+            "messages": [
                 {
                     "role": "system",
                     "content": (
@@ -138,7 +140,10 @@ class VectorService:
                     "content": f"Question: {question}\n\nDocument context:\n{context or 'No context retrieved.'}",
                 },
             ],
-        )
+        }
+        if self.settings.openai_chat_temperature is not None:
+            request["temperature"] = self.settings.openai_chat_temperature
+        stream = client.chat.completions.create(**request)
         for event in stream:
             token = event.choices[0].delta.content
             if token:

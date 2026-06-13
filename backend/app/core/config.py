@@ -29,7 +29,9 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"
+    openai_embedding_dimensions: int | None = Field(default=None, ge=1)
     openai_chat_model: str = "gpt-4.1-mini"
+    openai_chat_temperature: float | None = Field(default=None, ge=0, le=2)
 
     pinecone_api_key: str | None = None
     pinecone_index_name: str = "mychatpdf"
