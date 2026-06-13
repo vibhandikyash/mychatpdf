@@ -1,6 +1,9 @@
+import sys
+from types import SimpleNamespace
+
 from app.core.config import Settings
-from app.services.vector import VectorService
-from app.services.vector import RetrievedSource
+from app.models import Document, DocumentChunk, DocumentStatus, User
+from app.services.vector import RetrievedSource, VectorService
 
 
 def test_embed_texts_passes_configured_openai_dimensions(monkeypatch):
@@ -81,3 +84,72 @@ def test_stream_answer_tokens_omits_temperature_by_default(monkeypatch):
 
     assert tokens == ["Answer"]
     assert "temperature" not in calls[0]
+
+
+def test_delete_document_vectors_uses_stored_vector_ids(db_session, monkeypatch):
+    calls = []
+
+    class FakeIndex:
+        def delete(self, **kwargs):
+            calls.append(kwargs)
+
+    class FakePinecone:
+        def __init__(self, api_key):
+            self.api_key = api_key
+
+        def Index(self, name):
+            calls.append({"index": name})
+            return FakeIndex()
+
+    monkeypatch.setitem(sys.modules, "pinecone", SimpleNamespace(Pinecone=FakePinecone))
+    user = User(clerk_user_id="user_vectors", email="vectors@example.com")
+    document = Document(
+        user=user,
+        original_filename="paper.pdf",
+        content_type="application/pdf",
+        file_size_bytes=100,
+        status=DocumentStatus.READY,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pdf",
+        pinecone_namespace="test",
+    )
+    db_session.add_all(
+        [
+            user,
+            document,
+            DocumentChunk(
+                user=user,
+                document=document,
+                chunk_index=0,
+                page_start=1,
+                page_end=1,
+                text="First chunk",
+                text_excerpt="First chunk",
+                pinecone_vector_id="vec-1",
+            ),
+            DocumentChunk(
+                user=user,
+                document=document,
+                chunk_index=1,
+                page_start=2,
+                page_end=2,
+                text="Second chunk",
+                text_excerpt="Second chunk",
+                pinecone_vector_id="vec-2",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    VectorService(
+        Settings(
+            pinecone_api_key="pinecone-key",
+            pinecone_index_name="mychatpdf",
+            pinecone_namespace="phase1",
+        )
+    ).delete_document_vectors(user, document)
+
+    assert calls == [
+        {"index": "mychatpdf"},
+        {"ids": ["vec-1", "vec-2"], "namespace": "phase1"},
+    ]

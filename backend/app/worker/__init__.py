@@ -36,4 +36,5 @@ def _process_document_with_defaults(db: Session, document_id: UUID, settings: Se
         document_id,
         extractor=PdfTextExtractor(get_storage_service(settings)),
         vector_service=get_vector_service(settings),
+        max_pdf_pages=settings.max_pdf_pages,
     )

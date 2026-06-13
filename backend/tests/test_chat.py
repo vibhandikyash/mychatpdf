@@ -213,6 +213,53 @@ def test_contextual_question_does_not_dilute_standalone_questions():
     assert contextual_question == current_question
 
 
+def test_chat_stream_marks_assistant_failed_when_generation_errors(db_session):
+    class FailingVectorService:
+        def query_document(self, _user, _document, _question):
+            return []
+
+        def stream_answer_tokens(self, _question, _sources):
+            raise RuntimeError("OpenAI unavailable")
+            yield ""
+
+    user = User(
+        clerk_user_id="user_2abc123",
+        email="casey@example.com",
+        name="Casey Example",
+    )
+    document = Document(
+        user=user,
+        original_filename="paper.pdf",
+        content_type="application/pdf",
+        file_size_bytes=100,
+        status=DocumentStatus.READY,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pdf",
+        pinecone_namespace="test",
+    )
+    db_session.add_all([user, document])
+    db_session.commit()
+
+    events = list(
+        stream_chat_response(
+            db_session,
+            user,
+            document,
+            "Summarize this document.",
+            FailingVectorService(),
+        )
+    )
+
+    assistant_message = (
+        db_session.query(Message)
+        .filter_by(document_id=document.id, role=MessageRole.ASSISTANT)
+        .one()
+    )
+    assert any("event: error" in event for event in events)
+    assert assistant_message.status == MessageStatus.FAILED
+    assert "OpenAI unavailable" in (assistant_message.message_metadata or {}).get("error", "")
+
+
 def test_chat_stream_for_non_ready_document_returns_error_event(
     authenticated_client,
     db_session,

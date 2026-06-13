@@ -96,14 +96,14 @@ class VectorService:
     def delete_document_vectors(self, user: User, document: Document) -> None:
         if not self.settings.pinecone_api_key:
             return
+        vector_ids = [chunk.pinecone_vector_id for chunk in document.chunks if chunk.pinecone_vector_id]
+        if not vector_ids:
+            return
 
         from pinecone import Pinecone
 
         index = Pinecone(api_key=self.settings.pinecone_api_key).Index(self.settings.pinecone_index_name)
-        index.delete(
-            namespace=self.settings.pinecone_namespace,
-            filter={"user_id": str(user.id), "document_id": str(document.id)},
-        )
+        index.delete(ids=vector_ids, namespace=self.settings.pinecone_namespace)
 
     def stream_answer_tokens(self, question: str, sources: list[RetrievedSource]) -> Iterator[str]:
         if not self.settings.openai_api_key:

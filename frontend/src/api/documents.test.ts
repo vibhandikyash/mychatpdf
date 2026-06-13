@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiClient } from "./client";
-import { listDocuments, mapDocumentSummary, uploadDocument } from "./documents";
+import { getDocumentProcessingStatus, listDocuments, mapDocumentSummary, sendChatMessage, uploadDocument } from "./documents";
 
 describe("document API helpers", () => {
   it("maps backend document summaries to frontend document shape", () => {
@@ -65,5 +65,60 @@ describe("document API helpers", () => {
     expect(result.documentId).toBe("doc-1");
     expect(uploadedBody).toBeInstanceOf(FormData);
   });
-});
 
+  it("gets document processing status", async () => {
+    const client = new ApiClient({
+      fetcher: async () =>
+        new Response(
+          JSON.stringify({
+            document_id: "doc-1",
+            status: "embedding",
+            current_step: "embedding",
+            failure_code: null,
+            failure_message: null
+          }),
+          { status: 200 }
+        )
+    });
+
+    await expect(getDocumentProcessingStatus(client, "doc-1")).resolves.toMatchObject({
+      documentId: "doc-1",
+      status: "embedding",
+      currentStep: "embedding"
+    });
+  });
+
+  it("parses streamed chat responses into an assistant message", async () => {
+    const client = new ApiClient({
+      fetcher: async (_input, init) => {
+        expect(init?.method).toBe("POST");
+        expect(init?.body).toBe(JSON.stringify({ content: "What changed?" }));
+        return new Response(
+          [
+            'event: message_start\ndata: {"message_id":"msg-1"}',
+            'event: token\ndata: {"text":"Hello "}',
+            'event: token\ndata: {"text":"world"}',
+            'event: sources\ndata: {"items":[{"chunk_id":"chunk-1","page_start":2,"page_end":2,"excerpt":"Source text","score":0.9}]}',
+            'event: message_done\ndata: {"message_id":"msg-1"}'
+          ].join("\n\n"),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } }
+        );
+      }
+    });
+
+    await expect(sendChatMessage(client, "doc-1", "What changed?")).resolves.toMatchObject({
+      id: "msg-1",
+      role: "assistant",
+      content: "Hello world",
+      sources: [
+        {
+          chunkId: "chunk-1",
+          pageStart: 2,
+          pageEnd: 2,
+          excerpt: "Source text",
+          score: 0.9
+        }
+      ]
+    });
+  });
+});

@@ -98,3 +98,36 @@ def test_missing_document_id_returns_404(authenticated_client):
     response = authenticated_client.get(f"/api/documents/{uuid4()}")
 
     assert response.status_code == 404
+
+
+def test_retry_failed_document_enqueues_processing(authenticated_client, db_session, monkeypatch):
+    calls = []
+    user = User(
+        clerk_user_id="user_2abc123",
+        email="casey@example.com",
+        name="Casey Example",
+    )
+    document = Document(
+        user=user,
+        original_filename="failed.pdf",
+        content_type="application/pdf",
+        file_size_bytes=100,
+        status=DocumentStatus.FAILED,
+        failure_code="no_extractable_text",
+        failure_message="No text",
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pdf",
+        pinecone_namespace="test",
+    )
+    db_session.add_all([user, document])
+    db_session.commit()
+
+    def record_enqueue(_settings, document_id):
+        calls.append(document_id)
+
+    monkeypatch.setattr("app.api.routes.enqueue_document_processing", record_enqueue)
+
+    response = authenticated_client.post(f"/api/documents/{document.id}/retry")
+
+    assert response.status_code == 200
+    assert calls == [document.id]

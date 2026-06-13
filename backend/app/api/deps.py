@@ -94,13 +94,23 @@ def sync_user_from_claims(db: Session, claims: dict[str, Any]) -> User:
     clerk_user_id = str(claims["sub"])
     user = db.scalar(select(User).where(User.clerk_user_id == clerk_user_id))
     if user is None:
-        user = User(clerk_user_id=clerk_user_id)
+        user = User(
+            clerk_user_id=clerk_user_id,
+            email=_claim_email(claims),
+            name=_claim_name(claims),
+        )
         db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
 
-    user.email = _claim_email(claims)
-    user.name = _claim_name(claims)
-    db.commit()
-    db.refresh(user)
+    email = _claim_email(claims)
+    name = _claim_name(claims)
+    if user.email != email or user.name != name:
+        user.email = email
+        user.name = name
+        db.commit()
+        db.refresh(user)
     return user
 
 

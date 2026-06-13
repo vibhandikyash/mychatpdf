@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import logging
 from uuid import UUID
 
 from sqlalchemy import delete
@@ -14,8 +15,14 @@ from app.models import (
 from app.models.mixins import utc_now
 from app.services.vector import VectorService
 
+logger = logging.getLogger(__name__)
+
 
 class NoExtractableTextError(RuntimeError):
+    pass
+
+
+class MaxPagesExceededError(RuntimeError):
     pass
 
 
@@ -88,12 +95,26 @@ def _fail_no_text(db: Session, document: Document, job: ProcessingJob) -> None:
     db.commit()
 
 
+def _fail_max_pages(db: Session, document: Document, job: ProcessingJob, page_count: int, max_pdf_pages: int) -> None:
+    message = f"PDF has {page_count} pages, which exceeds the configured limit of {max_pdf_pages} pages."
+    document.status = DocumentStatus.FAILED
+    document.failure_code = "max_pdf_pages_exceeded"
+    document.failure_message = message
+    job.status = ProcessingJobStatus.FAILED
+    job.current_step = "failed"
+    job.error_code = "max_pdf_pages_exceeded"
+    job.error_message = message
+    job.finished_at = utc_now()
+    db.commit()
+
+
 def process_document(
     db: Session,
     document_id: UUID,
     *,
     extractor: PdfTextExtractor,
     vector_service: VectorService,
+    max_pdf_pages: int | None = None,
 ) -> None:
     document = db.get(Document, document_id)
     if document is None:
@@ -108,8 +129,22 @@ def process_document(
     db.commit()
 
     pages = extractor.extract_pages(document)
+    page_count = document.page_count or len(pages)
+    if max_pdf_pages is not None and page_count > max_pdf_pages:
+        logger.info(
+            "Document exceeded page limit",
+            extra={
+                "document_id": str(document.id),
+                "page_count": page_count,
+                "max_pdf_pages": max_pdf_pages,
+            },
+        )
+        _fail_max_pages(db, document, job, page_count, max_pdf_pages)
+        raise MaxPagesExceededError("max pdf pages exceeded")
+
     pages = [page for page in pages if page.text.strip()]
     if not pages:
+        logger.info("Document has no extractable text", extra={"document_id": str(document.id)})
         _fail_no_text(db, document, job)
         raise NoExtractableTextError("no extractable text")
 

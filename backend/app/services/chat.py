@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from collections.abc import Iterator
 from uuid import UUID
@@ -18,6 +19,8 @@ from app.models import (
 )
 from app.models.mixins import utc_now
 from app.services.vector import VectorService
+
+logger = logging.getLogger(__name__)
 
 RECENT_HISTORY_MESSAGE_LIMIT = 8
 RECENT_HISTORY_MAX_CHARS = 2400
@@ -122,12 +125,24 @@ def stream_chat_response(
     db.commit()
     db.refresh(assistant_message)
 
-    sources = vector_service.query_document(user, document, contextual_question)
     answer_parts: list[str] = []
     yield format_sse("message_start", {"message_id": str(assistant_message.id)})
-    for token in vector_service.stream_answer_tokens(contextual_question, sources):
-        answer_parts.append(token)
-        yield format_sse("token", {"text": token})
+    try:
+        sources = vector_service.query_document(user, document, contextual_question)
+        for token in vector_service.stream_answer_tokens(contextual_question, sources):
+            answer_parts.append(token)
+            yield format_sse("token", {"text": token})
+    except Exception as exc:
+        logger.exception(
+            "Chat response generation failed",
+            extra={"document_id": str(document.id), "message_id": str(assistant_message.id)},
+        )
+        assistant_message.content = "".join(answer_parts)
+        assistant_message.status = MessageStatus.FAILED
+        assistant_message.message_metadata = {"error": str(exc)}
+        db.commit()
+        yield format_sse("error", {"message": "Unable to generate an answer right now."})
+        return
 
     assistant_message.content = "".join(answer_parts)
     assistant_message.status = MessageStatus.SUCCEEDED

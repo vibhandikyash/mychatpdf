@@ -3,7 +3,7 @@ import asyncio
 import jwt
 import pytest
 
-from app.api.deps import get_clerk_jwks_client, get_current_clerk_claims
+from app.api.deps import get_clerk_jwks_client, get_current_clerk_claims, sync_user_from_claims
 from app.core.config import Settings
 from app.models import User
 
@@ -122,3 +122,42 @@ def test_me_updates_existing_local_user_from_clerk_claims(
     assert body["name"] == "Renamed User"
 
     assert db_session.query(User).filter_by(clerk_user_id="user_2abc123").count() == 1
+
+
+def test_sync_user_skips_commit_when_existing_claims_are_unchanged():
+    class FakeSession:
+        def __init__(self):
+            self.user = User(
+                clerk_user_id="user_2abc123",
+                email="casey@example.com",
+                name="Casey Example",
+            )
+            self.commits = 0
+            self.refreshes = 0
+
+        def scalar(self, _statement):
+            return self.user
+
+        def add(self, _user):
+            raise AssertionError("existing user should not be re-added")
+
+        def commit(self):
+            self.commits += 1
+
+        def refresh(self, _user):
+            self.refreshes += 1
+
+    db = FakeSession()
+
+    user = sync_user_from_claims(
+        db,
+        {
+            "sub": "user_2abc123",
+            "email": "casey@example.com",
+            "name": "Casey Example",
+        },
+    )
+
+    assert user is db.user
+    assert db.commits == 0
+    assert db.refreshes == 0

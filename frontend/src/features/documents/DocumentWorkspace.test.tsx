@@ -18,6 +18,20 @@ describe("DocumentWorkspace", () => {
     expect(screen.getByText(/page 7 of 24/i)).toBeInTheDocument();
   });
 
+  it("renders the signed PDF URL in the viewer", () => {
+    render(
+      <DocumentWorkspace
+        document={{ ...mockWorkspaceDocument, signedPdfUrl: "https://files.example.com/paper.pdf" }}
+        messages={[]}
+      />
+    );
+
+    expect(screen.getByTitle("PDF preview")).toHaveAttribute(
+      "src",
+      "https://files.example.com/paper.pdf#page=1&zoom=100"
+    );
+  });
+
   it("disables the composer when the document is not ready", () => {
     const processingDocument: WorkspaceDocument = {
       ...mockWorkspaceDocument,

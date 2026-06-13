@@ -26,6 +26,21 @@ export class ApiClient {
   }
 
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const response = await this.fetch(path, init);
+
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
+    return response.json() as Promise<T>;
+  }
+
+  async requestText(path: string, init: RequestInit = {}): Promise<string> {
+    const response = await this.fetch(path, init);
+    return response.text();
+  }
+
+  private async fetch(path: string, init: RequestInit = {}): Promise<Response> {
     const token = await this.getToken?.();
     const headers = new Headers(init.headers);
 
@@ -46,11 +61,7 @@ export class ApiClient {
       throw new ApiError(response.statusText || "Request failed", response.status);
     }
 
-    if (response.status === 204) {
-      return undefined as T;
-    }
-
-    return response.json() as Promise<T>;
+    return response;
   }
 }
 

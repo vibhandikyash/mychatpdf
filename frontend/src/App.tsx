@@ -8,16 +8,17 @@ import {
   deleteDocument,
   getDocumentChat,
   getDocumentFileUrl,
+  getDocumentProcessingStatus,
   listDocuments,
   retryDocumentProcessing,
+  sendChatMessage,
   uploadDocument
 } from "./api/documents";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";
 import { DocumentLibrary } from "./features/documents/DocumentLibrary";
 import { DocumentWorkspace } from "./features/documents/DocumentWorkspace";
 import { UploadHome } from "./features/upload/UploadHome";
-import { mockDocuments, mockMessages, mockWorkspaceDocument } from "./mocks/documents";
-import { DocumentSummary, WorkspaceDocument } from "./types";
+import { ChatMessage, DocumentStatus, DocumentSummary, WorkspaceDocument } from "./types";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
@@ -151,7 +152,7 @@ function AppShell({ children, fullBleed = false }: AppShellProps) {
 }
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const recentDocuments = mockDocuments.slice(0, 4);
+  const recentDocuments: DocumentSummary[] = [];
 
   return (
     <div className="flex h-full min-h-screen flex-col p-4">
@@ -183,7 +184,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       <section className="mt-6 min-h-0 flex-1">
         <h2 className="px-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Recent chats</h2>
         <ul className="mt-2 space-y-1">
-          {recentDocuments.map((document) => (
+          {recentDocuments.length ? recentDocuments.map((document) => (
             <li key={document.id}>
               <Link
                 to={`/app/documents/${document.id}`}
@@ -193,7 +194,9 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                 {document.originalFilename}
               </Link>
             </li>
-          ))}
+          )) : (
+            <li className="px-2 py-2 text-sm text-slate-500">No recent chats yet</li>
+          )}
         </ul>
       </section>
 
@@ -232,7 +235,7 @@ function NavItem({
 function HomeRoute() {
   const navigate = useNavigate();
   const api = useAuthenticatedApiClient();
-  const [documents, setDocuments] = useState(mockDocuments);
+  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
 
   useEffect(() => {
     if (!api) {
@@ -263,7 +266,7 @@ function HomeRoute() {
 function LibraryRoute() {
   const navigate = useNavigate();
   const api = useAuthenticatedApiClient();
-  const [documents, setDocuments] = useState(mockDocuments);
+  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
 
   async function refreshDocuments() {
     if (!api) {
@@ -301,29 +304,117 @@ function WorkspaceRoute() {
   const { documentId } = useParams();
   const api = useAuthenticatedApiClient();
   const [document, setDocument] = useState<WorkspaceDocument>(() => findWorkspaceDocument(documentId));
-  const [messages, setMessages] = useState(mockMessages);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!api || !documentId) {
       return;
     }
 
-    void Promise.all([
-      listDocuments(api),
-      getDocumentChat(api, documentId).catch(() => mockMessages),
-      getDocumentFileUrl(api, documentId).catch(() => undefined)
-    ])
-      .then(([documents, chatMessages, fileUrl]) => {
-        const currentDocument = documents.find((item) => item.id === documentId);
-        if (currentDocument) {
-          setDocument({ ...currentDocument, signedPdfUrl: fileUrl?.url });
-        }
-        setMessages(chatMessages);
-      })
-      .catch(() => undefined);
+    const apiClient = api;
+    const currentDocumentId = documentId;
+    let cancelled = false;
+
+    async function loadWorkspace() {
+      const [documents, chatMessages, fileUrl] = await Promise.all([
+        listDocuments(apiClient),
+        getDocumentChat(apiClient, currentDocumentId),
+        getDocumentFileUrl(apiClient, currentDocumentId).catch(() => undefined)
+      ]);
+      if (cancelled) {
+        return;
+      }
+      const currentDocument = documents.find((item) => item.id === currentDocumentId);
+      if (currentDocument) {
+        setDocument({ ...currentDocument, signedPdfUrl: fileUrl?.url });
+      }
+      setMessages(chatMessages);
+      setErrorMessage(null);
+    }
+
+    void loadWorkspace().catch(() => setErrorMessage("Unable to load this document."));
+    return () => {
+      cancelled = true;
+    };
   }, [api, documentId]);
 
-  return <DocumentWorkspace document={document} messages={messages} />;
+  useEffect(() => {
+    if (!api || !documentId || !isProcessingStatus(document.status)) {
+      return;
+    }
+
+    const apiClient = api;
+    const currentDocumentId = documentId;
+    const interval = window.setInterval(() => {
+      void getDocumentProcessingStatus(apiClient, currentDocumentId)
+        .then((status) => {
+          setDocument((current) => ({ ...current, status: status.status, failureMessage: status.failureMessage }));
+          if (status.status === "ready") {
+            void Promise.all([
+              listDocuments(apiClient),
+              getDocumentChat(apiClient, currentDocumentId),
+              getDocumentFileUrl(apiClient, currentDocumentId).catch(() => undefined)
+            ]).then(([documents, chatMessages, fileUrl]) => {
+              const currentDocument = documents.find((item) => item.id === currentDocumentId);
+              if (currentDocument) {
+                setDocument({ ...currentDocument, signedPdfUrl: fileUrl?.url });
+              }
+              setMessages(chatMessages);
+            });
+          }
+        })
+        .catch(() => setErrorMessage("Unable to refresh processing status."));
+    }, 2500);
+
+    return () => window.clearInterval(interval);
+  }, [api, documentId, document.status]);
+
+  async function handleSendMessage(content: string) {
+    if (!api || !documentId) {
+      return;
+    }
+
+    const userMessage: ChatMessage = {
+      id: `local-${Date.now()}`,
+      role: "user",
+      content,
+      createdAt: new Date().toISOString()
+    };
+    setMessages((current) => [...current, userMessage]);
+    setErrorMessage(null);
+
+    try {
+      const assistantMessage = await sendChatMessage(api, documentId, content);
+      const chatMessages = await getDocumentChat(api, documentId).catch(() => null);
+      setMessages((current) => (chatMessages ? chatMessages : [...current, assistantMessage]));
+    } catch {
+      setErrorMessage("Unable to send this message right now.");
+    }
+  }
+
+  return (
+    <>
+      {errorMessage ? (
+        <div className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">{errorMessage}</div>
+      ) : null}
+      <DocumentWorkspace document={document} messages={messages} onSendMessage={handleSendMessage} />
+    </>
+  );
+}
+
+function isProcessingStatus(status: DocumentStatus) {
+  return ["uploaded", "extracting", "chunking", "embedding", "indexing"].includes(status);
+}
+
+function findWorkspaceDocument(documentId?: string): WorkspaceDocument {
+  return {
+    id: documentId ?? "unknown",
+    originalFilename: "Document",
+    status: "uploaded",
+    fileSizeBytes: 0,
+    createdAt: new Date().toISOString()
+  };
 }
 
 function SettingsRoute() {
@@ -336,10 +427,6 @@ function SettingsRoute() {
       </div>
     </section>
   );
-}
-
-function findWorkspaceDocument(documentId?: string): WorkspaceDocument {
-  return mockDocuments.find((document) => document.id === documentId) ?? mockWorkspaceDocument;
 }
 
 function useAuthenticatedApiClient() {

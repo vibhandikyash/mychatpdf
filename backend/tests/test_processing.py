@@ -1,6 +1,6 @@
 from app.models import Document, DocumentStatus, ProcessingJob, ProcessingJobStatus, User
 from app.models import DocumentChunk
-from app.services.processing import ExtractedPage, NoExtractableTextError, process_document
+from app.services.processing import ExtractedPage, MaxPagesExceededError, NoExtractableTextError, process_document
 
 
 class NoTextExtractor:
@@ -21,6 +21,14 @@ class TextExtractor:
         return [
             ExtractedPage(page_number=1, text=" First page with useful text. "),
             ExtractedPage(page_number=2, text="Second page with more useful text."),
+        ]
+
+
+class TooManyPagesExtractor:
+    def extract_pages(self, _document):
+        return [
+            ExtractedPage(page_number=1, text="Page one."),
+            ExtractedPage(page_number=2, text="Page two."),
         ]
 
 
@@ -128,3 +136,44 @@ def test_text_processing_stores_chunks_indexes_vectors_and_marks_ready(db_sessio
             "vector_count": 2,
         }
     ]
+
+
+def test_processing_fails_before_embedding_when_pdf_exceeds_page_limit(db_session):
+    user = User(clerk_user_id="user_page_limit", email="limit@example.com")
+    document = Document(
+        user=user,
+        original_filename="long.pdf",
+        content_type="application/pdf",
+        file_size_bytes=200,
+        status=DocumentStatus.UPLOADED,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pdf",
+        pinecone_namespace="test",
+    )
+    job = ProcessingJob(
+        user=user,
+        document=document,
+        status=ProcessingJobStatus.QUEUED,
+        current_step="queued",
+    )
+    db_session.add_all([user, document, job])
+    db_session.commit()
+
+    try:
+        process_document(
+            db_session,
+            document.id,
+            extractor=TooManyPagesExtractor(),
+            vector_service=UnusedVectorService(),
+            max_pdf_pages=1,
+        )
+    except MaxPagesExceededError:
+        pass
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+
+    assert document.status == DocumentStatus.FAILED
+    assert document.failure_code == "max_pdf_pages_exceeded"
+    assert job.status == ProcessingJobStatus.FAILED
+    assert job.error_code == "max_pdf_pages_exceeded"

@@ -1,7 +1,8 @@
 from typing import Annotated
+import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -25,6 +26,7 @@ from app.services.vector import VectorService, get_vector_service
 from app.worker import enqueue_document_processing
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _enum_value(value: object) -> str:
@@ -102,10 +104,18 @@ def _validate_pdf_upload(file: UploadFile, content: bytes, settings: Settings) -
 @router.post("/api/documents", status_code=status.HTTP_201_CREATED)
 async def upload_document(
     file: Annotated[UploadFile, File()],
+    content_length: Annotated[int | None, Header(alias="content-length")] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    if content_length is not None and content_length > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="PDF exceeds the configured upload limit",
+        )
+
     content = await file.read()
     _validate_pdf_upload(file, content, settings)
 
@@ -137,6 +147,7 @@ async def upload_document(
     db.refresh(document)
     db.refresh(job)
     enqueue_document_processing(settings, document.id)
+    logger.info("Document uploaded", extra={"document_id": str(document.id), "user_id": str(current_user.id)})
 
     return {
         "id": str(document.id),
@@ -176,6 +187,7 @@ def retry_document_processing(
     document_id: UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
     document = get_owned_document(db, current_user, document_id)
     if document.status != DocumentStatus.FAILED:
@@ -192,6 +204,8 @@ def retry_document_processing(
     db.add(job)
     db.commit()
     db.refresh(job)
+    enqueue_document_processing(settings, document.id)
+    logger.info("Document processing retry enqueued", extra={"document_id": str(document.id)})
     return {"processing_job_id": str(job.id), "status": ProcessingJobStatus.QUEUED.value}
 
 
