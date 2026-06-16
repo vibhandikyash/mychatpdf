@@ -3,7 +3,7 @@ import { ClerkProvider, UserButton, useAuth } from "@clerk/clerk-react";
 import { FilePlus2, FileText, Library, Menu, Settings, X } from "lucide-react";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { AuthPage } from "./features/auth/AuthPages";
-import { createAuthenticatedApiClient } from "./api/client";
+import { ApiClient, createAuthenticatedApiClient } from "./api/client";
 import {
   deleteDocument,
   getDocumentChat,
@@ -21,9 +21,12 @@ import { UploadHome } from "./features/upload/UploadHome";
 import { ChatMessage, DocumentStatus, DocumentSummary, WorkspaceDocument } from "./types";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+const e2eAuthBypassEnabled = import.meta.env.VITE_E2E_AUTH_BYPASS === "true";
+const clerkAuthEnabled = Boolean(clerkPublishableKey) && !e2eAuthBypassEnabled;
 
 export function App() {
   const navigate = useNavigate();
+  const activeClerkPublishableKey = clerkAuthEnabled ? clerkPublishableKey : undefined;
   const routes = (
     <Routes>
       <Route path="/" element={<Navigate to="/app" replace />} />
@@ -72,13 +75,13 @@ export function App() {
     </Routes>
   );
 
-  if (!clerkPublishableKey) {
+  if (!activeClerkPublishableKey) {
     return routes;
   }
 
   return (
     <ClerkProvider
-      publishableKey={clerkPublishableKey}
+      publishableKey={activeClerkPublishableKey}
       routerPush={(to) => navigate(to)}
       routerReplace={(to) => navigate(to, { replace: true })}
       signInUrl="/sign-in"
@@ -92,7 +95,11 @@ export function App() {
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  if (!clerkPublishableKey) {
+  if (e2eAuthBypassEnabled) {
+    return <>{children}</>;
+  }
+
+  if (!clerkAuthEnabled) {
     return <ProtectedRoute authState={{ isLoaded: true, isSignedIn: false }}>{children}</ProtectedRoute>;
   }
 
@@ -212,7 +219,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </section>
 
       <div className="border-t border-slate-200 pt-4">
-        {clerkPublishableKey ? (
+        {clerkAuthEnabled ? (
           <UserButton afterSignOutUrl="/sign-in" />
         ) : (
           <p className="rounded-md bg-slate-100 px-3 py-2 text-xs leading-5 text-slate-600">
@@ -441,9 +448,20 @@ function SettingsRoute() {
 }
 
 function useAuthenticatedApiClient() {
+  if (e2eAuthBypassEnabled) {
+    return useMemo(
+      () =>
+        new ApiClient({
+          baseUrl: import.meta.env.VITE_API_BASE_URL ?? "/api",
+          getToken: async () => "e2e-token"
+        }),
+      []
+    );
+  }
+
   const { getToken } = useAuth();
   return useMemo(() => {
-    if (!clerkPublishableKey) {
+    if (!clerkAuthEnabled) {
       return null;
     }
 

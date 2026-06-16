@@ -7,6 +7,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: "./vitest.setup.ts",
+    exclude: ["e2e/**", "node_modules/**", "dist/**"],
     // Keep the suite hermetic: tests rely on a Clerk key being present
     // (the app gates auth on it) without depending on a real .env.
     env: {

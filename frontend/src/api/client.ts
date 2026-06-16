@@ -19,10 +19,10 @@ export class ApiClient {
   private readonly getToken?: () => Promise<string | null>;
   private readonly fetcher: typeof fetch;
 
-  constructor({ baseUrl = "/api", getToken, fetcher = fetch }: ApiClientOptions = {}) {
+  constructor({ baseUrl = "/api", getToken, fetcher }: ApiClientOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.getToken = getToken;
-    this.fetcher = fetcher;
+    this.fetcher = fetcher ?? globalThis.fetch.bind(globalThis);
   }
 
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
