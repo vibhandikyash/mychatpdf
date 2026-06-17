@@ -5,8 +5,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const HOST = "127.0.0.1";
-const PORT = 8000;
+const HOST = process.env.MYCHATPDF_MANUAL_API_HOST ?? "0.0.0.0";
+const PORT = Number(process.env.MYCHATPDF_MANUAL_API_PORT ?? 8000);
 const repoRoot = path.resolve(__dirname, "..");
 const backendPython = path.join(repoRoot, "backend", ".venv", "Scripts", "python.exe");
 const documents = new Map();

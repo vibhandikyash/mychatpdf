@@ -10,6 +10,7 @@ from app.models import (
     User,
 )
 from app.services.chat import build_contextual_question, stream_chat_response
+from app.services.vector import ANSWER_SYSTEM_PROMPT, RetrievedSource, format_source_context
 
 
 def test_get_chat_creates_empty_chat_for_owned_document(authenticated_client, db_session):
@@ -211,6 +212,22 @@ def test_contextual_question_does_not_dilute_standalone_questions():
     contextual_question = build_contextual_question(current_question, prior_messages)
 
     assert contextual_question == current_question
+
+
+def test_answer_prompt_contract_requires_grounded_page_citations():
+    source = RetrievedSource(
+        chunk_id="00000000-0000-0000-0000-000000000001",
+        page_start=3,
+        page_end=4,
+        excerpt="The service must return structured JSON with event labels and confidence scores.",
+        score=0.92,
+    )
+
+    assert "using only the provided document context" in ANSWER_SYSTEM_PROMPT
+    assert "Do not invent facts" in ANSWER_SYSTEM_PROMPT
+    assert "Do not add a separate Sources or References section" in ANSWER_SYSTEM_PROMPT
+    assert "(p. 3)" in ANSWER_SYSTEM_PROMPT
+    assert "[Source 1 | pp. 3-4]" in format_source_context(1, source)
 
 
 def test_chat_stream_marks_assistant_failed_when_generation_errors(db_session):

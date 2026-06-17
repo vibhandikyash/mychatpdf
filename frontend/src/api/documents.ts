@@ -54,6 +54,18 @@ interface BackendChatResponse {
   }>;
 }
 
+interface ParsedServerSentEvent {
+  event: string;
+  data: Record<string, unknown>;
+}
+
+interface SendChatMessageHandlers {
+  signal?: AbortSignal;
+  onStart?: (messageId: string) => void;
+  onToken?: (token: string) => void;
+  onSources?: (sources: Citation[]) => void;
+}
+
 export function mapDocumentSummary(document: BackendDocumentSummary): DocumentSummary {
   return {
     id: document.id,
@@ -96,25 +108,139 @@ function mapStreamCitation(source: {
   };
 }
 
-function parseServerSentEvents(raw: string): Array<{ event: string; data: Record<string, unknown> }> {
+function parseServerSentEventBlock(block: string): ParsedServerSentEvent | null {
+  const dataLines: string[] = [];
+  let event = "message";
+
+  for (const line of block.split("\n")) {
+    if (!line || line.startsWith(":")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf(":");
+    const field = separatorIndex === -1 ? line : line.slice(0, separatorIndex);
+    const rawValue = separatorIndex === -1 ? "" : line.slice(separatorIndex + 1);
+    const value = rawValue.startsWith(" ") ? rawValue.slice(1) : rawValue;
+
+    if (field === "event") {
+      event = value || "message";
+    }
+    if (field === "data") {
+      dataLines.push(value);
+    }
+  }
+
+  if (!block.trim()) {
+    return null;
+  }
+
+  const rawData = dataLines.join("\n").trim();
+  return {
+    event,
+    data: rawData ? JSON.parse(rawData) as Record<string, unknown> : {}
+  };
+}
+
+function parseServerSentEvents(raw: string): ParsedServerSentEvent[] {
   return raw
-    .trim()
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
     .split(/\n\n+/)
-    .filter(Boolean)
-    .map((block) => {
-      const lines = block.split("\n");
-      const eventLine = lines.find((line) => line.startsWith("event: "));
-      const dataLine = lines.find((line) => line.startsWith("data: "));
-      return {
-        event: eventLine?.slice(7) ?? "message",
-        data: dataLine ? JSON.parse(dataLine.slice(6)) : {}
-      };
-    });
+    .map(parseServerSentEventBlock)
+    .filter((event): event is ParsedServerSentEvent => event !== null);
+}
+
+async function readServerSentEvents(
+  response: Response,
+  onEvent: (event: ParsedServerSentEvent) => void
+): Promise<void> {
+  if (!response.body) {
+    parseServerSentEvents(await response.text()).forEach(onEvent);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  function drainBuffer(final = false) {
+    buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    let separatorIndex = buffer.indexOf("\n\n");
+
+    while (separatorIndex !== -1) {
+      const event = parseServerSentEventBlock(buffer.slice(0, separatorIndex));
+      if (event) {
+        onEvent(event);
+      }
+      buffer = buffer.slice(separatorIndex + 2);
+      separatorIndex = buffer.indexOf("\n\n");
+    }
+
+    if (final && buffer.trim()) {
+      const event = parseServerSentEventBlock(buffer);
+      if (event) {
+        onEvent(event);
+      }
+      buffer = "";
+    }
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      drainBuffer();
+    }
+    buffer += decoder.decode();
+    drainBuffer(true);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function mapStreamSources(sourceItems: unknown): Citation[] {
+  if (!Array.isArray(sourceItems)) {
+    return [];
+  }
+
+  return sourceItems.map((source, index) =>
+    mapStreamCitation(
+      source as {
+        chunk_id: string;
+        page_start: number;
+        page_end: number;
+        excerpt: string;
+        score?: number | null;
+      },
+      index
+    )
+  );
 }
 
 export async function listDocuments(client: ApiClient): Promise<DocumentSummary[]> {
-  const response = await client.request<BackendDocumentsResponse>("/api/documents");
-  return response.items.map(mapDocumentSummary);
+  const documents: BackendDocumentSummary[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const params = new URLSearchParams({ limit: "100" });
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+
+    const response = await client.request<BackendDocumentsResponse>(`/api/documents?${params.toString()}`);
+    documents.push(...response.items);
+    cursor = response.next_cursor;
+  } while (cursor);
+
+  return documents.map(mapDocumentSummary);
+}
+
+export async function getDocument(client: ApiClient, documentId: string): Promise<DocumentSummary> {
+  const response = await client.request<BackendDocumentSummary>(`/api/documents/${documentId}`);
+  return mapDocumentSummary(response);
 }
 
 export async function uploadDocument(client: ApiClient, file: File) {
@@ -133,6 +259,11 @@ export async function uploadDocument(client: ApiClient, file: File) {
 
 export async function getDocumentFileUrl(client: ApiClient, documentId: string) {
   return client.request<{ url: string; expires_at: string }>(`/api/documents/${documentId}/file-url`);
+}
+
+export async function getDocumentFileObjectUrl(client: ApiClient, documentId: string) {
+  const blob = await client.requestBlob(`/api/documents/${documentId}/file`);
+  return URL.createObjectURL(blob.type === "application/pdf" ? blob : new Blob([blob], { type: "application/pdf" }));
 }
 
 export async function getDocumentProcessingStatus(client: ApiClient, documentId: string) {
@@ -157,38 +288,51 @@ export async function getDocumentChat(client: ApiClient, documentId: string): Pr
   }));
 }
 
-export async function sendChatMessage(client: ApiClient, documentId: string, content: string): Promise<ChatMessage> {
-  const raw = await client.requestText(`/api/documents/${documentId}/chat/stream`, {
+export async function sendChatMessage(
+  client: ApiClient,
+  documentId: string,
+  content: string,
+  handlers: SendChatMessageHandlers = {}
+): Promise<ChatMessage> {
+  const response = await client.requestStream(`/api/documents/${documentId}/chat/stream`, {
     method: "POST",
-    body: JSON.stringify({ content })
+    body: JSON.stringify({ content }),
+    signal: handlers.signal
   });
-  const events = parseServerSentEvents(raw);
-  const errorEvent = events.find((event) => event.event === "error");
-  if (errorEvent) {
-    throw new Error(String(errorEvent.data.message ?? "Unable to generate an answer right now."));
-  }
 
-  const start = events.find((event) => event.event === "message_start");
-  const messageId = String(start?.data.message_id ?? crypto.randomUUID());
-  const contentText = events
-    .filter((event) => event.event === "token")
-    .map((event) => String(event.data.text ?? ""))
-    .join("");
-  const sourceItems = events.find((event) => event.event === "sources")?.data.items;
-  const sources = Array.isArray(sourceItems)
-    ? sourceItems.map((source, index) =>
-        mapStreamCitation(
-          source as {
-            chunk_id: string;
-            page_start: number;
-            page_end: number;
-            excerpt: string;
-            score?: number | null;
-          },
-          index
-        )
-      )
-    : [];
+  let messageId: string = crypto.randomUUID();
+  let contentText = "";
+  let sources: Citation[] = [];
+  let streamError: string | undefined;
+
+  await readServerSentEvents(response, (event) => {
+    if (event.event === "message_start") {
+      messageId = String(event.data.message_id ?? messageId);
+      handlers.onStart?.(messageId);
+      return;
+    }
+
+    if (event.event === "token") {
+      const token = String(event.data.text ?? "");
+      contentText += token;
+      handlers.onToken?.(token);
+      return;
+    }
+
+    if (event.event === "sources") {
+      sources = mapStreamSources(event.data.items);
+      handlers.onSources?.(sources);
+      return;
+    }
+
+    if (event.event === "error") {
+      streamError = String(event.data.message ?? "Unable to generate an answer right now.");
+    }
+  });
+
+  if (streamError) {
+    throw new Error(streamError);
+  }
 
   return {
     id: messageId,

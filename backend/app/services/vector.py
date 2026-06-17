@@ -15,6 +15,23 @@ class RetrievedSource:
     score: float | None
 
 
+ANSWER_SYSTEM_PROMPT = (
+    "You are MyChatPDF's document-grounded assistant. "
+    "Answer the user's question using only the provided document context. "
+    "If the context is missing or insufficient, say: "
+    "'The document does not provide enough information to answer that.' "
+    "Cite every document-derived factual claim with page citations in the form (p. 3) "
+    "or (pp. 3-4), using only page numbers shown in the context blocks. "
+    "Do not invent facts, citations, page numbers, filenames, or source labels. "
+    "Use clean Markdown-style formatting with short paragraphs and bullets when helpful. "
+    "Keep answers concise and directly useful; use bullets for summaries, comparisons, "
+    "lists, requirements, risks, or action items. "
+    "Do not add a separate Sources or References section; citations must stay inline. "
+    "Preserve important technical terms and numbers exactly when they appear in context. "
+    "If context blocks conflict, explain the conflict and cite both pages."
+)
+
+
 class VectorService:
     def __init__(self, settings: Settings, sleeper=time.sleep):
         self.settings = settings
@@ -149,7 +166,7 @@ class VectorService:
             if sources:
                 yield (
                     "Based on the retrieved document context, "
-                    f"{sources[0].excerpt}"
+                    f"{sources[0].excerpt} ({format_page_citation(sources[0])})"
                 )
             else:
                 yield "The document does not provide enough information to answer that question."
@@ -157,10 +174,7 @@ class VectorService:
 
         from openai import OpenAI
 
-        context = "\n\n".join(
-            f"[Source {index}]\nPages: {source.page_start}-{source.page_end}\nText: {source.excerpt}"
-            for index, source in enumerate(sources, start=1)
-        )
+        context = "\n\n".join(format_source_context(index, source) for index, source in enumerate(sources, start=1))
         client = OpenAI(api_key=self.settings.openai_api_key)
         request: dict[str, object] = {
             "model": self.settings.openai_chat_model,
@@ -168,15 +182,22 @@ class VectorService:
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        "Answer using only the provided document context. "
-                        "If the context is insufficient, say the document does not provide enough information. "
-                        "Do not invent facts, citations, or page numbers."
-                    ),
+                    "content": ANSWER_SYSTEM_PROMPT,
                 },
                 {
                     "role": "user",
-                    "content": f"Question: {question}\n\nDocument context:\n{context or 'No context retrieved.'}",
+                    "content": (
+                        "Question:\n"
+                        f"{question}\n\n"
+                        "Document context blocks:\n"
+                        f"{context or 'No context retrieved.'}\n\n"
+                        "Answer requirements:\n"
+                        "- Answer only from the context blocks above.\n"
+                        "- Format the answer with short paragraphs or bullet lists when it improves readability.\n"
+                        "- Put page citations on the same sentence or bullet as the claim they support.\n"
+                        "- Do not add a final Sources section.\n"
+                        "- If the answer needs information outside the context, say the document does not provide enough information."
+                    ),
                 },
             ],
         }
@@ -208,3 +229,13 @@ class VectorService:
 
 def get_vector_service(settings: Settings) -> VectorService:
     return VectorService(settings)
+
+
+def format_page_citation(source: RetrievedSource) -> str:
+    if source.page_start == source.page_end:
+        return f"p. {source.page_start}"
+    return f"pp. {source.page_start}-{source.page_end}"
+
+
+def format_source_context(index: int, source: RetrievedSource) -> str:
+    return f"[Source {index} | {format_page_citation(source)}]\nText:\n{source.excerpt}"

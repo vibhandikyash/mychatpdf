@@ -5,6 +5,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const inputPath = path.join(repoRoot, "docs", "pdf-extraction-qa-report.md");
 const htmlPath = path.join(repoRoot, "docs", "pdf-extraction-qa-report-polished.html");
 const pdfPath = path.join(repoRoot, "docs", "pdf-extraction-qa-report-polished.pdf");
+const appUrl = process.env.MYCHATPDF_APP_URL ?? "configured deployment URL";
 
 function splitMarkdownRow(line) {
   const cells = [];
@@ -311,7 +312,7 @@ async function main() {
     <div class="meta">
       <div><strong>Generated:</strong> ${renderText(generated)}</div>
       <div><strong>Source:</strong> Local manual QA run</div>
-      <div><strong>App:</strong> <code>http://127.0.0.1:5173/app</code></div>
+      <div><strong>App:</strong> <code>${renderText(appUrl)}</code></div>
       <div><strong>PDF folder:</strong> <code>manual-testing/sample-pdfs</code></div>
     </div>
     <div class="cards">

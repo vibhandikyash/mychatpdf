@@ -156,6 +156,20 @@ def test_stream_answer_tokens_omits_temperature_by_default(monkeypatch):
     assert "temperature" not in calls[0]
 
 
+def test_stream_answer_tokens_without_openai_includes_page_citation():
+    source = RetrievedSource(
+        chunk_id="chunk-id",
+        page_start=2,
+        page_end=3,
+        excerpt="Relevant context.",
+        score=None,
+    )
+
+    tokens = list(VectorService(Settings(openai_api_key=None)).stream_answer_tokens("Question?", [source]))
+
+    assert tokens == ["Based on the retrieved document context, Relevant context. (pp. 2-3)"]
+
+
 def test_delete_document_vectors_uses_stored_vector_ids(db_session, monkeypatch):
     calls = []
 

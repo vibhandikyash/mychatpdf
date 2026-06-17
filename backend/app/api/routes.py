@@ -1,10 +1,13 @@
-from typing import Annotated
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from datetime import datetime
+from io import BytesIO
 import logging
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_owned_document
@@ -31,6 +34,11 @@ logger = logging.getLogger(__name__)
 
 def _enum_value(value: object) -> str:
     return value.value if hasattr(value, "value") else str(value)
+
+
+def _inline_pdf_disposition(filename: str) -> str:
+    safe_filename = filename.replace("\\", "_").replace('"', "'")
+    return f'inline; filename="{safe_filename}"'
 
 
 @router.get("/health")
@@ -69,23 +77,53 @@ def _document_summary(document: Document) -> dict[str, object]:
     }
 
 
+DOCUMENT_LIST_DEFAULT_LIMIT = 50
+DOCUMENT_LIST_MAX_LIMIT = 100
+
+
+def _encode_document_cursor(document: Document) -> str:
+    payload = f"{document.created_at.isoformat()}|{document.id}"
+    return urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _decode_document_cursor(cursor: str) -> tuple[datetime, UUID]:
+    try:
+        padded_cursor = cursor + ("=" * (-len(cursor) % 4))
+        raw_cursor = urlsafe_b64decode(padded_cursor.encode("ascii")).decode("utf-8")
+        created_at, document_id = raw_cursor.split("|", 1)
+        return datetime.fromisoformat(created_at), UUID(document_id)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid document cursor") from exc
+
+
 @router.get("/api/documents")
 def list_documents(
     status_filter: Annotated[DocumentStatus | None, Query(alias="status")] = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    limit: Annotated[int, Query(ge=1, le=DOCUMENT_LIST_MAX_LIMIT)] = DOCUMENT_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     statement = (
         select(Document)
         .where(Document.user_id == current_user.id, Document.deleted_at.is_(None))
-        .order_by(Document.created_at.desc())
-        .limit(limit)
+        .order_by(Document.created_at.desc(), Document.id.desc())
+        .limit(limit + 1)
     )
     if status_filter:
         statement = statement.where(Document.status == status_filter)
-    documents = db.scalars(statement).all()
-    return {"items": [_document_summary(document) for document in documents], "next_cursor": None}
+    if cursor:
+        cursor_created_at, cursor_document_id = _decode_document_cursor(cursor)
+        statement = statement.where(
+            or_(
+                Document.created_at < cursor_created_at,
+                (Document.created_at == cursor_created_at) & (Document.id < cursor_document_id),
+            )
+        )
+    documents = list(db.scalars(statement).all())
+    visible_documents = documents[:limit]
+    next_cursor = _encode_document_cursor(visible_documents[-1]) if len(documents) > limit else None
+    return {"items": [_document_summary(document) for document in visible_documents], "next_cursor": next_cursor}
 
 
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
@@ -261,6 +299,28 @@ def document_file_url(
     return get_storage_service(settings).signed_file_url(document)
 
 
+@router.get("/api/documents/{document_id}/file")
+def document_file(
+    document_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    document = get_owned_document(db, current_user, document_id)
+    pdf_bytes = get_storage_service(settings).download_pdf(document)
+    if not pdf_bytes:
+        raise HTTPException(status_code=404, detail="PDF file is not available")
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type=document.content_type or "application/pdf",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": _inline_pdf_disposition(document.original_filename),
+        },
+    )
+
+
 @router.get("/api/documents/{document_id}/processing-status")
 def document_processing_status(
     document_id: UUID,
@@ -334,4 +394,8 @@ def stream_document_chat(
     return StreamingResponse(
         stream_chat_response(db, current_user, document, content, vector_service),
         media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )

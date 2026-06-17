@@ -1,8 +1,16 @@
 const fs = require("fs");
 const path = require("path");
 
-const baseUrl = "http://127.0.0.1:8000";
+const baseUrl = readRequiredUrl("MYCHATPDF_API_BASE_URL");
 const sampleDir = path.join(__dirname, "sample-pdfs");
+
+function readRequiredUrl(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Set ${name} to the API origin before running this manual regression script.`);
+  }
+  return value.replace(/\/$/, "");
+}
 
 const testSets = [
   {

@@ -1,20 +1,24 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const e2eHost = process.env.E2E_HOST ?? "0.0.0.0";
+const e2ePort = process.env.E2E_PORT ?? "5173";
+const e2eBaseUrl = process.env.E2E_BASE_URL ?? `http://${e2eHost}:${e2ePort}`;
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
   reporter: [["list"]],
   use: {
-    baseURL: "http://127.0.0.1:5173",
+    baseURL: e2eBaseUrl,
     trace: "on-first-retry"
   },
   webServer: {
-    command: "npm run dev -- --host 127.0.0.1",
-    url: "http://127.0.0.1:5173",
+    command: `npm run dev -- --host ${e2eHost}`,
+    url: e2eBaseUrl,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     env: {
-      VITE_API_BASE_URL: "http://127.0.0.1:8000",
+      VITE_API_BASE_URL: process.env.E2E_API_BASE_URL ?? "/api",
       VITE_E2E_AUTH_BYPASS: "true"
     }
   },

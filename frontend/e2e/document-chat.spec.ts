@@ -1,7 +1,8 @@
 import { expect, Page, Route, test } from "@playwright/test";
 
-const apiBaseUrl = "http://127.0.0.1:8000";
-const appOrigin = "http://127.0.0.1:5173";
+const fallbackAppUrl = `http://${process.env.E2E_HOST ?? "0.0.0.0"}:${process.env.E2E_PORT ?? "5173"}`;
+const apiRoutePattern = process.env.E2E_API_ROUTE_PATTERN ?? "**/api/**";
+const appOrigin = new URL(process.env.E2E_BASE_URL ?? fallbackAppUrl).origin;
 const documentId = "doc-e2e-ready";
 
 type BackendMessage = {
@@ -49,14 +50,14 @@ test("user uploads a PDF, asks a question, opens a citation, and refreshes chat 
   await expect(page.getByText("What improved?")).toBeVisible();
   await expect(page.getByText("Pipeline quality improved in regulated industries.").first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Open source page 2" }).click();
+  await page.getByRole("button", { name: "Open page 2 in PDF" }).click();
   await expect(page.getByText("Page 2 of 3")).toBeVisible();
 
   await page.reload();
   await expect(page.getByText("Ready to chat")).toBeVisible();
   await expect(page.getByText("What improved?")).toBeVisible();
   await expect(page.getByText("Pipeline quality improved in regulated industries.").first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open source page 2" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open page 2 in PDF" })).toBeVisible();
 });
 
 test("rejects a non-PDF upload before calling the upload API", async ({ page }) => {
@@ -116,7 +117,7 @@ async function mockApi(
     chatMode: options.chatMode ?? "success"
   };
 
-  await page.route(`${apiBaseUrl}/**`, async (route) => {
+  await page.route(apiRoutePattern, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const method = request.method();
@@ -131,6 +132,11 @@ async function mockApi(
         items: state.uploaded ? [documentSummary(state.ready ? "ready" : "uploaded")] : [],
         next_cursor: null
       });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === `/api/documents/${documentId}`) {
+      await fulfillJson(route, documentSummary(state.ready ? "ready" : "uploaded"));
       return;
     }
 
@@ -207,7 +213,7 @@ async function mockApi(
         {
           id: "message-assistant-e2e",
           role: "assistant",
-          content: "Pipeline quality improved in regulated industries.",
+          content: "Pipeline quality improved in regulated industries (p. 2).",
           created_at: now,
           sources: [
             {
@@ -230,7 +236,7 @@ async function mockApi(
         },
         body: [
           'event: message_start\ndata: {"message_id":"message-assistant-e2e"}',
-          'event: token\ndata: {"text":"Pipeline quality improved in regulated industries."}',
+          'event: token\ndata: {"text":"Pipeline quality improved in regulated industries (p. 2)."}',
           'event: sources\ndata: {"items":[{"chunk_id":"chunk-e2e","page_start":2,"page_end":2,"excerpt":"Pipeline quality improved in regulated industries.","score":0.92}]}',
           'event: message_done\ndata: {"message_id":"message-assistant-e2e"}'
         ].join("\n\n")

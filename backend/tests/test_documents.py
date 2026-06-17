@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from uuid import UUID, uuid4
 
@@ -94,6 +95,48 @@ def test_document_ownership_denial_returns_404(authenticated_client, db_session)
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Document not found"
+
+
+def test_list_documents_paginates_owned_documents(authenticated_client, db_session):
+    user = User(clerk_user_id="user_2abc123", email="casey@example.com", name="Casey Example")
+    base_time = datetime(2026, 6, 17, 10, 0, tzinfo=timezone.utc)
+    documents = [
+        Document(
+            user=user,
+            original_filename=f"paper-{index}.pdf",
+            content_type="application/pdf",
+            file_size_bytes=100 + index,
+            status=DocumentStatus.READY,
+            wasabi_bucket="bucket",
+            wasabi_object_key=f"users/user/documents/doc-{index}/original.pdf",
+            pinecone_namespace="test",
+            created_at=base_time - timedelta(minutes=index),
+        )
+        for index in range(3)
+    ]
+    db_session.add_all([user, *documents])
+    db_session.commit()
+
+    first_page = authenticated_client.get("/api/documents?limit=2")
+
+    assert first_page.status_code == 200
+    first_body = first_page.json()
+    assert [item["original_filename"] for item in first_body["items"]] == ["paper-0.pdf", "paper-1.pdf"]
+    assert first_body["next_cursor"]
+
+    second_page = authenticated_client.get(f"/api/documents?limit=2&cursor={first_body['next_cursor']}")
+
+    assert second_page.status_code == 200
+    second_body = second_page.json()
+    assert [item["original_filename"] for item in second_body["items"]] == ["paper-2.pdf"]
+    assert second_body["next_cursor"] is None
+
+
+def test_list_documents_rejects_invalid_cursor(authenticated_client):
+    response = authenticated_client.get("/api/documents?cursor=not-a-valid-cursor")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Invalid document cursor"
 
 
 def test_file_url_requires_ownership(authenticated_client, db_session):

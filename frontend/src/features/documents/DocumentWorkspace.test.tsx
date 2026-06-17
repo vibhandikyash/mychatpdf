@@ -12,13 +12,13 @@ describe("DocumentWorkspace", () => {
 
     render(<DocumentWorkspace document={mockWorkspaceDocument} messages={mockMessages} />);
 
-    expect(screen.getByText(/page 1 of 24/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /open source page 7/i }));
+    expect(await screen.findByText(/page 1 of 24/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /open page 7 in pdf/i }));
 
     expect(screen.getByText(/page 7 of 24/i)).toBeInTheDocument();
   });
 
-  it("renders the signed PDF URL in the viewer", () => {
+  it("offers a native PDF fallback when a signed PDF URL is available", async () => {
     render(
       <DocumentWorkspace
         document={{ ...mockWorkspaceDocument, signedPdfUrl: "https://files.example.com/paper.pdf" }}
@@ -26,10 +26,7 @@ describe("DocumentWorkspace", () => {
       />
     );
 
-    expect(screen.getByTitle("PDF preview")).toHaveAttribute(
-      "src",
-      "https://files.example.com/paper.pdf#page=1&zoom=100"
-    );
+    expect(await screen.findByRole("button", { name: /use native pdf preview/i })).toBeInTheDocument();
   });
 
   it("disables the composer when the document is not ready", () => {
@@ -67,6 +64,6 @@ describe("DocumentWorkspace", () => {
 
     expect(onSendMessage).toHaveBeenCalledWith("Summarize this document.");
     expect(screen.getByRole("status", { name: /generating answer/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /send message/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /stop generating/i })).toBeInTheDocument();
   });
 });

@@ -64,17 +64,16 @@ export function UploadDropzone({ onAccepted, initialProgress = 100 }: UploadDrop
       }}
       onDragLeave={() => setIsDragging(false)}
       onDrop={onDrop}
-      className={`rounded-lg border-2 border-dashed bg-white p-6 text-center shadow-panel transition ${
-        isDragging ? "border-sea ring-4 ring-teal-100" : "border-slate-250"
+      className={`flex min-h-[280px] flex-col justify-center rounded-xl border-2 border-dashed bg-white p-6 text-center transition ${
+        isDragging ? "border-sea bg-teal-50/40 ring-4 ring-teal-100" : "border-slate-300"
       }`}
     >
-      <div className="mx-auto grid h-14 w-14 place-items-center rounded-lg bg-teal-50 text-sea">
+      <div className="mx-auto grid h-16 w-16 place-items-center rounded-xl bg-teal-50 text-sea">
         <UploadCloud size={26} aria-hidden="true" />
       </div>
-      <h2 className="mt-4 text-2xl font-semibold text-ink">Upload a PDF</h2>
+      <h2 className="mt-4 text-2xl font-semibold text-ink">Drop your PDF here</h2>
       <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-600">
-        Drag a text-based PDF here or choose one from your computer. Uploads are validated before the backend
-        receives them.
+        Drag a text-based PDF here or choose one from your computer. Uploads are validated before processing starts.
       </p>
 
       <div className="mt-5 flex flex-wrap items-center justify-center gap-3">

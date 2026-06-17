@@ -57,7 +57,7 @@ def app(db_session: Session):
         clerk_issuer="https://example.clerk.accounts.dev",
         clerk_jwks_url="https://example.clerk.accounts.dev/.well-known/jwks.json",
         clerk_audience="mychatpdf-test",
-        frontend_origin="http://localhost:5173",
+        frontend_origin="https://app.example.test",
         # Force the no-credential code paths so tests never touch live
         # OpenAI/Pinecone/Wasabi even when a real .env or shell env is present.
         openai_api_key=None,

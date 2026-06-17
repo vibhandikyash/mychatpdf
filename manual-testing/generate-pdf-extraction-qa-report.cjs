@@ -5,8 +5,17 @@ const { spawnSync } = require("child_process");
 const repoRoot = path.resolve(__dirname, "..");
 const sampleDir = path.join(__dirname, "sample-pdfs");
 const outputPath = path.join(repoRoot, "docs", "pdf-extraction-qa-report.md");
-const baseUrl = "http://127.0.0.1:8000";
+const baseUrl = readRequiredUrl("MYCHATPDF_API_BASE_URL");
+const appUrl = process.env.MYCHATPDF_APP_URL ?? "configured deployment URL";
 const pythonPath = path.join(repoRoot, "backend", ".venv", "Scripts", "python.exe");
+
+function readRequiredUrl(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Set ${name} to the API origin before generating this QA report.`);
+  }
+  return value.replace(/\/$/, "");
+}
 
 const testSets = [
   {
@@ -232,8 +241,8 @@ async function main() {
     "",
     "Environment:",
     "",
-    "- App URL: `http://127.0.0.1:5173/app`",
-    "- Manual API: `http://127.0.0.1:8000`",
+    `- App URL: \`${appUrl}\``,
+    `- Manual API: \`${baseUrl}\``,
     "- PDF folder: `manual-testing/sample-pdfs`",
     "- Extraction engine used by audit: PyMuPDF (`page.get_text(\"text\")`), same family as backend extraction.",
     "- Live OpenAI/Pinecone/Clerk services were not used in this manual audit.",
