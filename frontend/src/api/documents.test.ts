@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./client";
 import {
   getDocument,
@@ -10,6 +10,10 @@ import {
 } from "./documents";
 
 describe("document API helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("maps backend document summaries to frontend document shape", () => {
     expect(
       mapDocumentSummary({
@@ -174,6 +178,32 @@ describe("document API helpers", () => {
           score: 0.9
         }
       ]
+    });
+  });
+
+  it("streams chat when crypto.randomUUID is unavailable", async () => {
+    vi.stubGlobal("crypto", {
+      getRandomValues: (bytes: Uint8Array) => {
+        bytes.fill(1);
+        return bytes;
+      }
+    });
+
+    const client = new ApiClient({
+      fetcher: async () =>
+        new Response(
+          [
+            'event: token\ndata: {"text":"Fallback "} ',
+            'event: token\ndata: {"text":"works"}'
+          ].join("\n\n"),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } }
+        )
+    });
+
+    await expect(sendChatMessage(client, "doc-1", "What changed?")).resolves.toMatchObject({
+      id: "01010101-0101-4101-8101-010101010101",
+      role: "assistant",
+      content: "Fallback works"
     });
   });
 });
