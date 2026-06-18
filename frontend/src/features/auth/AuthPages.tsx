@@ -139,7 +139,7 @@ export function AuthPage({ mode }: AuthPageProps) {
           <section className="order-1 flex min-w-0 justify-center px-1 lg:order-2 lg:justify-end lg:px-0">
             <div
               ref={authCardRef}
-              className="w-full min-w-0 max-w-md rounded-lg border border-slate-200 bg-white p-4 shadow-[0_28px_70px_rgba(23,33,43,0.14)] sm:p-5"
+              className="auth-clerk-card w-full min-w-0 max-w-md rounded-lg border border-slate-200 bg-white p-4 shadow-[0_28px_70px_rgba(23,33,43,0.14)] sm:p-5"
             >
               <div className="mb-5 flex items-start justify-between gap-4 border-b border-slate-200 pb-5">
                 <div>
@@ -231,7 +231,7 @@ const clerkAppearance = {
     formButtonPrimary:
       "box-border min-h-11 w-full min-w-0 rounded-md bg-[#17212b] text-sm font-semibold hover:bg-slate-800",
     formFieldInput:
-      "box-border min-h-11 w-full min-w-0 rounded-md border-slate-200 bg-white text-ink focus:border-teal-600 focus:ring-teal-600",
+      "box-border min-h-11 w-full min-w-0 rounded-md border-slate-200 bg-white text-ink focus:outline-none focus:ring-0 focus-visible:outline-none",
     footer: "w-full min-w-0",
     footerAction: "w-full min-w-0",
     footerActionLink: "font-semibold text-[#0f766e] hover:text-teal-800",
