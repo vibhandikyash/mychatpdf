@@ -63,7 +63,7 @@ export function AuthPage({ mode }: AuthPageProps) {
         </header>
 
         <div className="grid flex-1 items-center gap-8 py-8 lg:grid-cols-[minmax(0,1fr)_440px] xl:gap-14">
-          <section className="min-w-0">
+          <section className="order-2 min-w-0 lg:order-1">
             <div className="max-w-3xl">
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-sea">PDF intelligence, grounded</p>
               <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-tight text-ink sm:text-5xl lg:text-6xl">
@@ -136,7 +136,7 @@ export function AuthPage({ mode }: AuthPageProps) {
             </div>
           </section>
 
-          <section className="flex justify-center lg:justify-end">
+          <section className="order-1 flex justify-center lg:order-2 lg:justify-end">
             <div
               ref={authCardRef}
               className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-[0_28px_70px_rgba(23,33,43,0.14)]"
