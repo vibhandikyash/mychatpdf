@@ -50,7 +50,7 @@ export function AuthPage({ mode }: AuthPageProps) {
   }, [isNestedAuthPath, location.pathname]);
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-[linear-gradient(135deg,#f8fbfc_0%,#eef7f6_46%,#f8fafc_100%)] px-3 py-5 text-ink sm:px-6 lg:px-10">
+    <main className="auth-page min-h-screen overflow-x-hidden bg-[linear-gradient(135deg,#f8fbfc_0%,#eef7f6_46%,#f8fafc_100%)] px-3 py-5 text-ink sm:px-6 lg:px-10">
       <div className="mx-auto flex min-h-[calc(100vh-40px)] w-full max-w-7xl flex-col">
         <header className="flex items-center justify-between gap-4 py-2">
           <Link to="/app" className="rounded-xl focus-visible:outline focus-visible:outline-4 focus-visible:outline-teal-200">
@@ -146,9 +146,11 @@ export function AuthPage({ mode }: AuthPageProps) {
                   <p className="text-sm font-semibold uppercase tracking-[0.16em] text-sea">
                     {mode === "sign-in" ? "Welcome back" : "New workspace"}
                   </p>
-                  <h2 className="mt-2 text-xl font-semibold text-ink sm:text-2xl">{title}</h2>
+                  <h2 className="mt-2 break-words text-xl font-semibold leading-tight text-ink sm:text-2xl">
+                    {title}
+                  </h2>
                 </div>
-                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-teal-50 text-sea">
+                <span className="auth-card-icon grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-teal-50 text-sea">
                   <Sparkles size={22} aria-hidden="true" />
                 </span>
               </div>
