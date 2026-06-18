@@ -1,0 +1,21 @@
+{
+  "name": "MyPDFChat",
+  "short_name": "MyPDFChat",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "64x64",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.svg",
+      "sizes": "180x180",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "theme_color": "#17212b",
+  "background_color": "#f6f8fb",
+  "display": "standalone"
+}

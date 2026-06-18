@@ -1,1 +1,1 @@
-"""MyChatPDF backend application package."""
+"""MyPDFChat backend application package."""

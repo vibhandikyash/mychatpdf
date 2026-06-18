@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or Settings()
     configure_logging(app_settings.log_level)
-    app = FastAPI(title="MyChatPDF API", version="0.1.0")
+    app = FastAPI(title="MyPDFChat API", version="0.1.0")
     app.state.settings = app_settings
 
     cors_origins = app_settings.cors_origins()

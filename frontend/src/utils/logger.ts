@@ -3,18 +3,18 @@ type LogContext = Record<string, unknown>;
 export const appLogger = {
   error(message: string, context?: LogContext) {
     if (context) {
-      console.error(`[MyChatPDF] ${message}`, context);
+      console.error(`[MyPDFChat] ${message}`, context);
       return;
     }
 
-    console.error(`[MyChatPDF] ${message}`);
+    console.error(`[MyPDFChat] ${message}`);
   },
   warn(message: string, context?: LogContext) {
     if (context) {
-      console.warn(`[MyChatPDF] ${message}`, context);
+      console.warn(`[MyPDFChat] ${message}`, context);
       return;
     }
 
-    console.warn(`[MyChatPDF] ${message}`);
+    console.warn(`[MyPDFChat] ${message}`);
   }
 };

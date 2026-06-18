@@ -26,7 +26,7 @@ describe("App auth routes", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Upload, ask, and verify answers against the original PDF." })).toBeInTheDocument();
-    expect(screen.getByText("MyChatPDF")).toBeInTheDocument();
+    expect(screen.getByText("MyPDFChat")).toBeInTheDocument();
   });
 });
 

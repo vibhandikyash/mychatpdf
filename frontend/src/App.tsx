@@ -21,6 +21,7 @@ import {
   uploadDocument
 } from "./api/documents";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";
+import { BrandLockup } from "./features/brand/Brand";
 import { DocumentLibrary } from "./features/documents/DocumentLibrary";
 import { DocumentWorkspace } from "./features/documents/DocumentWorkspace";
 import { UploadHome } from "./features/upload/UploadHome";
@@ -243,10 +244,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white px-4 py-5">
       <Link to="/app" onClick={onNavigate} className="mb-5 flex items-center gap-3 rounded-lg px-1 text-ink">
-        <span className="grid h-11 w-11 place-items-center rounded-xl bg-ink text-white shadow-sm">
-          <FileText size={20} aria-hidden="true" />
-        </span>
-        <span className="text-xl font-semibold tracking-tight">MyChatPDF</span>
+        <BrandLockup markClassName="h-11 w-11 shrink-0" />
       </Link>
 
       <Link

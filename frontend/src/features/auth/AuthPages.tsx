@@ -1,7 +1,8 @@
 import { SignIn, SignUp } from "@clerk/clerk-react";
-import { FileText } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { CheckCircle2, FileSearch, LockKeyhole, MessageSquareText, Sparkles } from "lucide-react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { BrandLockup, BrandMark, PRODUCT_NAME } from "../brand/Brand";
 
 interface AuthPageProps {
   mode: "sign-in" | "sign-up";
@@ -9,7 +10,7 @@ interface AuthPageProps {
 
 export function AuthPage({ mode }: AuthPageProps) {
   const hasClerkKey = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
-  const title = mode === "sign-in" ? "Sign in to MyChatPDF" : "Create your MyChatPDF account";
+  const title = mode === "sign-in" ? `Sign in to ${PRODUCT_NAME}` : `Create your ${PRODUCT_NAME} account`;
   const location = useLocation();
   const authCardRef = useRef<HTMLDivElement>(null);
   const [showEmptyNestedRouteFallback, setShowEmptyNestedRouteFallback] = useState(false);
@@ -49,59 +50,184 @@ export function AuthPage({ mode }: AuthPageProps) {
   }, [isNestedAuthPath, location.pathname]);
 
   return (
-    <main className="grid min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(15,118,110,0.14),_transparent_32%),#f6f8fb] px-4 py-8 lg:grid-cols-[1fr_480px] lg:px-12">
-      <section className="flex flex-col justify-between py-6">
-        <div className="flex items-center gap-3 text-ink">
-          <span className="grid h-11 w-11 place-items-center rounded-lg bg-ink text-white">
-            <FileText size={22} aria-hidden="true" />
-          </span>
-          <span className="text-xl font-semibold">MyChatPDF</span>
-        </div>
-        <div className="max-w-2xl py-14">
-          <p className="mb-4 text-sm font-semibold uppercase tracking-[0.16em] text-sea">Document-first AI</p>
-          <h1 className="text-4xl font-semibold leading-tight text-ink sm:text-5xl">
-            Upload, ask, and verify answers against the original PDF.
-          </h1>
-          <p className="mt-5 max-w-xl text-lg leading-8 text-slate-600">
-            Phase 1 keeps the flow focused: authenticated uploads, document status visibility, grounded chat,
-            and citations that jump back to the page.
-          </p>
-        </div>
-      </section>
+    <main className="min-h-screen bg-[linear-gradient(135deg,#f8fbfc_0%,#eef7f6_46%,#f8fafc_100%)] px-4 py-5 text-ink sm:px-6 lg:px-10">
+      <div className="mx-auto flex min-h-[calc(100vh-40px)] w-full max-w-7xl flex-col">
+        <header className="flex items-center justify-between gap-4 py-2">
+          <Link to="/app" className="rounded-xl focus-visible:outline focus-visible:outline-4 focus-visible:outline-teal-200">
+            <BrandLockup markClassName="h-11 w-11 shrink-0" textClassName="text-xl font-semibold tracking-tight" />
+          </Link>
+          <div className="hidden items-center gap-2 rounded-full border border-teal-100 bg-white/80 px-4 py-2 text-sm font-medium text-slate-700 shadow-sm sm:flex">
+            <LockKeyhole size={16} className="text-sea" aria-hidden="true" />
+            Private document workspace
+          </div>
+        </header>
 
-      <section className="flex items-center justify-center">
-        <div ref={authCardRef} className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-4 shadow-panel">
-          {hasClerkKey ? (
-            mode === "sign-in" ? (
-              <SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" />
-            ) : (
-              <SignUp routing="path" path="/sign-up" signInUrl="/sign-in" />
-            )
-          ) : (
-            <div className="p-6">
-              <h2 className="text-xl font-semibold text-ink">{title}</h2>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                Add <code className="rounded bg-slate-100 px-1.5 py-0.5">VITE_CLERK_PUBLISHABLE_KEY</code> to
-                enable the hosted Clerk form in this shell.
+        <div className="grid flex-1 items-center gap-8 py-8 lg:grid-cols-[minmax(0,1fr)_440px] xl:gap-14">
+          <section className="min-w-0">
+            <div className="max-w-3xl">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-sea">PDF intelligence, grounded</p>
+              <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-tight text-ink sm:text-5xl lg:text-6xl">
+                Chat with every PDF and keep the source in view.
+              </h1>
+              <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-600">
+                A focused workspace for upload, preview, streaming answers, and cited pages that stay connected to
+                the original document.
               </p>
             </div>
-          )}
-          {showEmptyNestedRouteFallback ? (
-            <div className="p-6 text-center">
-              <h2 className="text-xl font-semibold text-ink">Continue from sign up</h2>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                This verification step needs the sign-up session from the same browser tab.
-              </p>
-              <Link
-                to={basePath}
-                className="mt-5 inline-flex min-h-11 items-center justify-center rounded-md bg-ink px-4 text-sm font-semibold text-white hover:bg-slate-800"
-              >
-                {mode === "sign-in" ? "Back to sign in" : "Start sign up"}
-              </Link>
+
+            <div className="mt-8 grid max-w-3xl gap-3 sm:grid-cols-3">
+              <AuthSignal icon={<FileSearch size={18} aria-hidden="true" />} title="Preview" body="Read beside the chat." />
+              <AuthSignal
+                icon={<MessageSquareText size={18} aria-hidden="true" />}
+                title="Ask"
+                body="Stream answers as they form."
+              />
+              <AuthSignal icon={<CheckCircle2 size={18} aria-hidden="true" />} title="Verify" body="Jump back to pages." />
             </div>
-          ) : null}
+
+            <div className="mt-9 max-w-4xl rounded-lg border border-slate-200 bg-white/90 p-4 shadow-panel backdrop-blur">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1fr)]">
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sea">PDF viewer</p>
+                      <p className="mt-1 truncate text-sm font-semibold text-ink">market-analysis-brief.pdf</p>
+                    </div>
+                    <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                      Ready
+                    </span>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    <div className="h-3 w-3/4 rounded-full bg-slate-300" />
+                    <div className="h-3 w-full rounded-full bg-slate-200" />
+                    <div className="h-3 w-11/12 rounded-full bg-slate-200" />
+                    <div className="rounded-md border border-teal-200 bg-white p-3">
+                      <div className="h-2.5 w-2/3 rounded-full bg-teal-200" />
+                      <div className="mt-2 h-2.5 w-5/6 rounded-full bg-slate-200" />
+                      <div className="mt-2 h-2.5 w-3/5 rounded-full bg-slate-200" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-md border border-slate-200 bg-white p-4">
+                  <div className="flex items-center gap-2">
+                    <BrandMark className="h-8 w-8 shrink-0" />
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sea">Document chat</p>
+                      <p className="text-sm font-semibold text-ink">Source-backed answer</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 rounded-md bg-ink px-4 py-3 text-sm leading-6 text-white">
+                    Which pages explain the revenue risk?
+                  </div>
+                  <div className="mt-4 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-4">
+                    <div className="h-2.5 w-full rounded-full bg-slate-300" />
+                    <div className="h-2.5 w-11/12 rounded-full bg-slate-200" />
+                    <div className="h-2.5 w-4/5 rounded-full bg-slate-200" />
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <span className="rounded-full bg-teal-50 px-2.5 py-1 text-xs font-semibold text-sea">Page 4</span>
+                      <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                        Page 8
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="flex justify-center lg:justify-end">
+            <div
+              ref={authCardRef}
+              className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-[0_28px_70px_rgba(23,33,43,0.14)]"
+            >
+              <div className="mb-5 flex items-start justify-between gap-4 border-b border-slate-200 pb-5">
+                <div>
+                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-sea">
+                    {mode === "sign-in" ? "Welcome back" : "New workspace"}
+                  </p>
+                  <h2 className="mt-2 text-2xl font-semibold text-ink">{title}</h2>
+                </div>
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-teal-50 text-sea">
+                  <Sparkles size={22} aria-hidden="true" />
+                </span>
+              </div>
+
+              {hasClerkKey ? (
+                mode === "sign-in" ? (
+                  <SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" appearance={clerkAppearance} />
+                ) : (
+                  <SignUp routing="path" path="/sign-up" signInUrl="/sign-in" appearance={clerkAppearance} />
+                )
+              ) : (
+                <div className="p-6">
+                  <h2 className="text-xl font-semibold text-ink">{title}</h2>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">
+                    Authentication is not configured for this environment yet. Add the Clerk publishable key before
+                    opening this workspace to users.
+                  </p>
+                </div>
+              )}
+              {showEmptyNestedRouteFallback ? (
+                <div className="p-6 text-center">
+                  <h2 className="text-xl font-semibold text-ink">Continue securely</h2>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">
+                    This step needs the active authentication session from the same browser tab.
+                  </p>
+                  <Link
+                    to={basePath}
+                    className="mt-5 inline-flex min-h-11 items-center justify-center rounded-md bg-ink px-4 text-sm font-semibold text-white hover:bg-slate-800"
+                  >
+                    {mode === "sign-in" ? "Back to sign in" : "Start sign up"}
+                  </Link>
+                </div>
+              ) : null}
+              <p className="mt-5 border-t border-slate-200 pt-4 text-xs leading-5 text-slate-500">
+                Uploaded PDFs stay in your authenticated workspace and answers are grounded in retrieved document
+                pages.
+              </p>
+            </div>
+          </section>
         </div>
-      </section>
+      </div>
     </main>
   );
 }
+
+function AuthSignal({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white/80 p-4 shadow-sm">
+      <div className="flex items-center gap-2 text-sea">
+        {icon}
+        <h2 className="text-sm font-semibold text-ink">{title}</h2>
+      </div>
+      <p className="mt-2 text-sm leading-5 text-slate-600">{body}</p>
+    </div>
+  );
+}
+
+const clerkAppearance = {
+  variables: {
+    colorPrimary: "#0f766e",
+    colorText: "#17212b",
+    colorTextSecondary: "#475569",
+    colorBackground: "#ffffff",
+    borderRadius: "8px",
+    fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+  },
+  elements: {
+    rootBox: "w-full",
+    cardBox: "w-full border-0 bg-transparent shadow-none",
+    card: "w-full border-0 bg-transparent p-0 shadow-none",
+    header: "hidden",
+    socialButtonsBlockButton:
+      "min-h-11 rounded-md border-slate-200 text-sm font-semibold text-ink hover:bg-slate-50",
+    formButtonPrimary: "min-h-11 rounded-md bg-[#17212b] text-sm font-semibold hover:bg-slate-800",
+    formFieldInput:
+      "min-h-11 rounded-md border-slate-200 bg-white text-ink focus:border-teal-600 focus:ring-teal-600",
+    footerActionLink: "font-semibold text-[#0f766e] hover:text-teal-800",
+    dividerLine: "bg-slate-200",
+    dividerText: "text-slate-500",
+    formFieldLabel: "text-sm font-semibold text-ink"
+  }
+};
