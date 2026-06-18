@@ -155,35 +155,37 @@ export function AuthPage({ mode }: AuthPageProps) {
                 </span>
               </div>
 
-              {hasClerkKey ? (
-                mode === "sign-in" ? (
-                  <SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" appearance={clerkAppearance} />
+              <div className="auth-clerk-inner">
+                {hasClerkKey ? (
+                  mode === "sign-in" ? (
+                    <SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" appearance={clerkAppearance} />
+                  ) : (
+                    <SignUp routing="path" path="/sign-up" signInUrl="/sign-in" appearance={clerkAppearance} />
+                  )
                 ) : (
-                  <SignUp routing="path" path="/sign-up" signInUrl="/sign-in" appearance={clerkAppearance} />
-                )
-              ) : (
-                <div className="p-6">
-                  <h2 className="text-xl font-semibold text-ink">{title}</h2>
-                  <p className="mt-3 text-sm leading-6 text-slate-600">
-                    Authentication is not configured for this environment yet. Add the Clerk publishable key before
-                    opening this workspace to users.
-                  </p>
-                </div>
-              )}
-              {showEmptyNestedRouteFallback ? (
-                <div className="p-6 text-center">
-                  <h2 className="text-xl font-semibold text-ink">Continue securely</h2>
-                  <p className="mt-3 text-sm leading-6 text-slate-600">
-                    This step needs the active authentication session from the same browser tab.
-                  </p>
-                  <Link
-                    to={basePath}
-                    className="mt-5 inline-flex min-h-11 items-center justify-center rounded-md bg-ink px-4 text-sm font-semibold text-white hover:bg-slate-800"
-                  >
-                    {mode === "sign-in" ? "Back to sign in" : "Start sign up"}
-                  </Link>
-                </div>
-              ) : null}
+                  <div className="p-6">
+                    <h2 className="text-xl font-semibold text-ink">{title}</h2>
+                    <p className="mt-3 text-sm leading-6 text-slate-600">
+                      Authentication is not configured for this environment yet. Add the Clerk publishable key before
+                      opening this workspace to users.
+                    </p>
+                  </div>
+                )}
+                {showEmptyNestedRouteFallback ? (
+                  <div className="p-6 text-center">
+                    <h2 className="text-xl font-semibold text-ink">Continue securely</h2>
+                    <p className="mt-3 text-sm leading-6 text-slate-600">
+                      This step needs the active authentication session from the same browser tab.
+                    </p>
+                    <Link
+                      to={basePath}
+                      className="mt-5 inline-flex min-h-11 items-center justify-center rounded-md bg-ink px-4 text-sm font-semibold text-white hover:bg-slate-800"
+                    >
+                      {mode === "sign-in" ? "Back to sign in" : "Start sign up"}
+                    </Link>
+                  </div>
+                ) : null}
+              </div>
               <p className="mt-5 border-t border-slate-200 pt-4 text-xs leading-5 text-slate-500">
                 Uploaded PDFs stay in your authenticated workspace and answers are grounded in retrieved document
                 pages.

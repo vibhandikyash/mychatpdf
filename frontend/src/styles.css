@@ -54,6 +54,7 @@ textarea:focus-visible {
 }
 
 .auth-clerk-card .cl-rootBox,
+.auth-clerk-card .auth-clerk-inner,
 .auth-clerk-card .cl-cardBox,
 .auth-clerk-card .cl-card,
 .auth-clerk-card .cl-main,
@@ -71,6 +72,11 @@ textarea:focus-visible {
   width: 100% !important;
   max-width: 100% !important;
   min-width: 0 !important;
+}
+
+.auth-clerk-inner {
+  padding: 2px;
+  overflow: visible;
 }
 
 .auth-clerk-card .cl-socialButtonsBlockButton,
