@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     clerk_jwks_timeout_seconds: int = Field(default=5, ge=1)
     clerk_audience: str | None = None
     frontend_origin: str | AnyHttpUrl | None = None
+    frontend_origins: str | None = None
 
     wasabi_access_key_id: str | None = None
     wasabi_secret_access_key: str | None = None
@@ -46,6 +47,25 @@ class Settings(BaseSettings):
     max_pdf_pages: int = Field(default=300, ge=1)
     redis_url: str = "redis://redis:6379/0"
     log_level: str = "INFO"
+
+    def cors_origins(self) -> list[str]:
+        origins: list[str] = []
+
+        if self.frontend_origin:
+            origins.append(str(self.frontend_origin))
+
+        if self.frontend_origins:
+            origins.extend(self.frontend_origins.split(","))
+
+        normalized_origins = []
+        seen_origins = set()
+        for origin in origins:
+            normalized_origin = origin.strip().rstrip("/")
+            if normalized_origin and normalized_origin not in seen_origins:
+                normalized_origins.append(normalized_origin)
+                seen_origins.add(normalized_origin)
+
+        return normalized_origins
 
 
 @lru_cache

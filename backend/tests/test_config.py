@@ -1,4 +1,7 @@
+from fastapi.testclient import TestClient
+
 from app.core.config import Settings
+from app.main import create_app
 
 
 def test_empty_optional_numeric_environment_values_are_none(monkeypatch):
@@ -7,3 +10,38 @@ def test_empty_optional_numeric_environment_values_are_none(monkeypatch):
     settings = Settings()
 
     assert settings.openai_chat_temperature is None
+
+
+def test_cors_origins_combines_legacy_and_list_values():
+    settings = Settings(
+        _env_file=None,
+        frontend_origin="http://localhost:5173/",
+        frontend_origins="http://mypdfchat.com, https://mypdfchat.com ,http://mypdfchat.com",
+    )
+
+    assert settings.cors_origins() == [
+        "http://localhost:5173",
+        "http://mypdfchat.com",
+        "https://mypdfchat.com",
+    ]
+
+
+def test_cors_preflight_allows_configured_frontend_origin():
+    app = create_app(
+        Settings(
+            _env_file=None,
+            frontend_origins="http://mypdfchat.com,http://www.mypdfchat.com",
+        )
+    )
+
+    response = TestClient(app).options(
+        "/api/documents",
+        headers={
+            "Origin": "http://mypdfchat.com",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://mypdfchat.com"
