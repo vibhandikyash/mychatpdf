@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { ClerkProvider, UserButton, useAuth } from "@clerk/clerk-react";
+import { AuthenticateWithRedirectCallback, ClerkProvider, UserButton, useAuth } from "@clerk/clerk-react";
 import {
   FilePlus2,
   FileText,
@@ -46,6 +46,10 @@ export function App() {
   const routes = (
     <Routes>
       <Route path="/" element={<Navigate to="/app" replace />} />
+      <Route
+        path="/sso-callback"
+        element={clerkAuthEnabled ? <AuthenticateWithRedirectCallback /> : <Navigate to="/sign-in" replace />}
+      />
       <Route path="/sign-in/*" element={<AuthPage mode="sign-in" />} />
       <Route path="/sign-up/*" element={<AuthPage mode="sign-up" />} />
       <Route

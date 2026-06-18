@@ -6,14 +6,31 @@ import { render } from "@testing-library/react";
 import { App } from "./App";
 
 vi.mock("@clerk/clerk-react", () => ({
+  AuthenticateWithRedirectCallback: () => <div>Completing sign in</div>,
   ClerkProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
-  SignIn: () => <div />,
-  SignUp: () => <div />,
   UserButton: () => <button type="button">Account</button>,
   useAuth: () => ({
     isLoaded: true,
     isSignedIn: true,
     getToken: async () => "test-token"
+  }),
+  useSignIn: () => ({
+    isLoaded: true,
+    signIn: {
+      authenticateWithRedirect: vi.fn(),
+      create: vi.fn()
+    },
+    setActive: vi.fn()
+  }),
+  useSignUp: () => ({
+    isLoaded: true,
+    signUp: {
+      authenticateWithRedirect: vi.fn(),
+      attemptEmailAddressVerification: vi.fn(),
+      create: vi.fn(),
+      prepareEmailAddressVerification: vi.fn()
+    },
+    setActive: vi.fn()
   })
 }));
 

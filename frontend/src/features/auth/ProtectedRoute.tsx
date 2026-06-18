@@ -18,7 +18,7 @@ function ProtectedContent({ authState, children }: Required<ProtectedRouteProps>
   if (!authState.isLoaded) {
     return (
       <main aria-busy="true" className="min-h-screen bg-mist">
-        <span role="status" className="sr-only">
+        <span role="status" aria-label="Opening workspace" className="sr-only">
           Opening workspace
         </span>
       </main>

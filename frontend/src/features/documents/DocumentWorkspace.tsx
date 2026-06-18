@@ -288,7 +288,12 @@ export function DocumentWorkspace({
       return;
     }
 
-    scrollContainer.scrollTo({ top: scrollContainer.scrollHeight });
+    if (typeof scrollContainer.scrollTo === "function") {
+      scrollContainer.scrollTo({ top: scrollContainer.scrollHeight });
+      return;
+    }
+
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
   }, [orderedMessages, isGenerating]);
 
   return (
