@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     clerk_jwks_url: str = ""
     clerk_jwks_timeout_seconds: int = Field(default=5, ge=1)
     clerk_audience: str | None = None
-    frontend_origin: str | AnyHttpUrl = "http://localhost:5173"
+    frontend_origin: str | AnyHttpUrl | None = None
 
     wasabi_access_key_id: str | None = None
     wasabi_secret_access_key: str | None = None
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
 
     max_upload_mb: int = Field(default=20, ge=1)
     max_pdf_pages: int = Field(default=300, ge=1)
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = "redis://redis:6379/0"
     log_level: str = "INFO"
 
 

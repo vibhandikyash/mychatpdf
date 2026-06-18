@@ -17,13 +17,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="MyChatPDF API", version="0.1.0")
     app.state.settings = app_settings
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[str(app_settings.frontend_origin)],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    if app_settings.frontend_origin:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[str(app_settings.frontend_origin)],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

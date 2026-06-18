@@ -40,4 +40,5 @@ export interface ChatMessage {
 
 export interface WorkspaceDocument extends DocumentSummary {
   signedPdfUrl?: string;
+  pdfHttpHeaders?: Record<string, string>;
 }

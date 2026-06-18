@@ -55,7 +55,7 @@ export const mockMessages: ChatMessage[] = [
     id: "msg-2",
     role: "assistant",
     content:
-      "The report emphasizes margin pressure, longer sales cycles, and renewed demand in regulated industries. It recommends watching pipeline quality before expanding spend.",
+      "The report emphasizes margin pressure, longer sales cycles, and renewed demand in regulated industries (p. 7). It recommends watching pipeline quality before expanding spend (pp. 12-13).",
     createdAt: "2026-06-12T15:16:04Z",
     sources: [
       {

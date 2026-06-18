@@ -19,10 +19,10 @@ export class ApiClient {
   private readonly getToken?: () => Promise<string | null>;
   private readonly fetcher: typeof fetch;
 
-  constructor({ baseUrl = "/api", getToken, fetcher = fetch }: ApiClientOptions = {}) {
+  constructor({ baseUrl = "", getToken, fetcher }: ApiClientOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.getToken = getToken;
-    this.fetcher = fetcher;
+    this.fetcher = fetcher ?? globalThis.fetch.bind(globalThis);
   }
 
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -38,6 +38,24 @@ export class ApiClient {
   async requestText(path: string, init: RequestInit = {}): Promise<string> {
     const response = await this.fetch(path, init);
     return response.text();
+  }
+
+  async requestStream(path: string, init: RequestInit = {}): Promise<Response> {
+    return this.fetch(path, init);
+  }
+
+  async requestBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+    const response = await this.fetch(path, init);
+    return response.blob();
+  }
+
+  url(path: string): string {
+    return `${this.baseUrl}${path}`;
+  }
+
+  async authHeaders(): Promise<Record<string, string>> {
+    const token = await this.getToken?.();
+    return token ? { Authorization: `Bearer ${token}` } : {};
   }
 
   private async fetch(path: string, init: RequestInit = {}): Promise<Response> {
@@ -67,7 +85,7 @@ export class ApiClient {
 
 export function createAuthenticatedApiClient(getToken: () => Promise<string | null>) {
   return new ApiClient({
-    baseUrl: import.meta.env.VITE_API_BASE_URL ?? "/api",
+    baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
     getToken
   });
 }

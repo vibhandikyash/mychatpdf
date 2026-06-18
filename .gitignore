@@ -20,6 +20,8 @@ venv/
 node_modules/
 dist/
 coverage/
+test-results/
+playwright-report/
 .vite/
 *.tsbuildinfo
 
@@ -28,3 +30,5 @@ coverage/
 tmp/
 uploads/
 *.db
+*.log
+manual-testing/review-screenshots/

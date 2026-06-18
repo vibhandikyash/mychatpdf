@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { ApiClient } from "./client";
-import { getDocumentProcessingStatus, listDocuments, mapDocumentSummary, sendChatMessage, uploadDocument } from "./documents";
+import {
+  getDocument,
+  getDocumentProcessingStatus,
+  listDocuments,
+  mapDocumentSummary,
+  sendChatMessage,
+  uploadDocument
+} from "./documents";
 
 describe("document API helpers", () => {
   it("maps backend document summaries to frontend document shape", () => {
@@ -27,26 +34,74 @@ describe("document API helpers", () => {
   });
 
   it("lists documents through the authenticated API client", async () => {
+    const requestedUrls: string[] = [];
     const client = new ApiClient({
-      fetcher: async () =>
-        new Response(
-          JSON.stringify({
-            items: [
-              {
-                id: "doc-1",
-                original_filename: "paper.pdf",
-                status: "ready",
-                file_size_bytes: 1024,
-                created_at: "2026-06-13T00:00:00Z"
-              }
-            ],
-            next_cursor: null
-          }),
+      fetcher: async (input) => {
+        requestedUrls.push(String(input));
+        const isFirstPage = !String(input).includes("cursor=");
+        return new Response(
+          JSON.stringify(
+            isFirstPage
+              ? {
+                  items: [
+                    {
+                      id: "doc-1",
+                      original_filename: "paper.pdf",
+                      status: "ready",
+                      file_size_bytes: 1024,
+                      created_at: "2026-06-13T00:00:00Z"
+                    }
+                  ],
+                  next_cursor: "next-page"
+                }
+              : {
+                  items: [
+                    {
+                      id: "doc-2",
+                      original_filename: "notes.pdf",
+                      status: "ready",
+                      file_size_bytes: 2048,
+                      created_at: "2026-06-14T00:00:00Z"
+                    }
+                  ],
+                  next_cursor: null
+                }
+          ),
           { status: 200 }
-        )
+        );
+      }
     });
 
-    await expect(listDocuments(client)).resolves.toHaveLength(1);
+    await expect(listDocuments(client)).resolves.toHaveLength(2);
+    expect(requestedUrls).toEqual([
+      "/api/documents?limit=100",
+      "/api/documents?limit=100&cursor=next-page"
+    ]);
+  });
+
+  it("gets a single document through the detail endpoint", async () => {
+    const client = new ApiClient({
+      baseUrl: "",
+      fetcher: async (input) => {
+        expect(input).toBe("/api/documents/doc-1");
+        return new Response(
+          JSON.stringify({
+            id: "doc-1",
+            original_filename: "paper.pdf",
+            status: "ready",
+            file_size_bytes: 1024,
+            created_at: "2026-06-13T00:00:00Z"
+          }),
+          { status: 200 }
+        );
+      }
+    });
+
+    await expect(getDocument(client, "doc-1")).resolves.toMatchObject({
+      id: "doc-1",
+      originalFilename: "paper.pdf",
+      status: "ready"
+    });
   });
 
   it("uploads PDF files as multipart form data", async () => {

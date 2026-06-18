@@ -17,14 +17,10 @@ function ProtectedContent({ authState, children }: Required<ProtectedRouteProps>
 
   if (!authState.isLoaded) {
     return (
-      <main className="grid min-h-screen place-items-center bg-mist px-6">
-        <div
-          role="status"
-          aria-label="Checking session"
-          className="rounded-lg border border-slate-200 bg-white px-5 py-4 text-sm font-medium text-slate-700 shadow-panel"
-        >
-          Checking your session...
-        </div>
+      <main aria-busy="true" className="min-h-screen bg-mist">
+        <span role="status" className="sr-only">
+          Opening workspace
+        </span>
       </main>
     );
   }

@@ -5,7 +5,7 @@ import { ProtectedRoute } from "./ProtectedRoute";
 import { renderWithRouter } from "../../test/test-utils";
 
 describe("ProtectedRoute", () => {
-  it("shows a session loading state while Clerk auth is unresolved", () => {
+  it("keeps private content hidden while Clerk auth is unresolved", () => {
     renderWithRouter(
       <Routes>
         <Route
@@ -20,7 +20,8 @@ describe("ProtectedRoute", () => {
       ["/app"]
     );
 
-    expect(screen.getByRole("status", { name: /checking session/i })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /opening workspace/i })).toBeInTheDocument();
+    expect(screen.queryByText(/checking your session/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/private app/i)).not.toBeInTheDocument();
   });
 
