@@ -14,6 +14,7 @@ import {
   type NoticeTone
 } from "./AuthFormPrimitives";
 import { type AuthCopy, type AuthMode } from "./authConfig";
+import { BrandName, PRODUCT_NAME } from "../brand/Brand";
 
 type AuthStep = "credentials" | "verify-email";
 
@@ -266,12 +267,26 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
       </form>
 
       <p className="border-t border-slate-200 pt-4 text-center text-sm leading-6 text-slate-600">
-        {copy.switchPrompt}{" "}
+        <SwitchPrompt prompt={copy.switchPrompt} />{" "}
         <Link to={copy.switchPath} className="font-semibold text-sea hover:text-teal-800">
           {copy.switchLabel}
         </Link>
       </p>
     </div>
+  );
+}
+
+function SwitchPrompt({ prompt }: { prompt: string }) {
+  if (!prompt.includes(PRODUCT_NAME)) {
+    return <>{prompt}</>;
+  }
+
+  return (
+    <>
+      {prompt.slice(0, prompt.indexOf(PRODUCT_NAME))}
+      <BrandName />
+      {prompt.slice(prompt.indexOf(PRODUCT_NAME) + PRODUCT_NAME.length)}
+    </>
   );
 }
 

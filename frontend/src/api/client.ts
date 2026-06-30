@@ -85,7 +85,9 @@ export class ApiClient {
 
 export function createAuthenticatedApiClient(getToken: () => Promise<string | null>) {
   return new ApiClient({
-    baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
+    baseUrl: import.meta.env.DEV && import.meta.env.VITE_DEV_API_PROXY_TARGET
+      ? ""
+      : import.meta.env.VITE_API_BASE_URL ?? "",
     getToken
   });
 }

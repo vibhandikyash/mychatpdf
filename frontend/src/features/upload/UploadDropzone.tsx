@@ -65,10 +65,10 @@ export function UploadDropzone({ onAccepted, initialProgress = 100 }: UploadDrop
       onDragLeave={() => setIsDragging(false)}
       onDrop={onDrop}
       className={`flex min-h-[280px] flex-col justify-center rounded-xl border-2 border-dashed bg-white p-6 text-center transition ${
-        isDragging ? "border-sea bg-teal-50/40 ring-4 ring-teal-100" : "border-slate-300"
+        isDragging ? "brand-soft-surface border-sea ring-4 ring-teal-100" : "border-slate-300"
       }`}
     >
-      <div className="mx-auto grid h-16 w-16 place-items-center rounded-xl bg-teal-50 text-sea">
+      <div className="brand-gradient mx-auto grid h-16 w-16 place-items-center rounded-xl text-white shadow-sm">
         <UploadCloud size={26} aria-hidden="true" />
       </div>
       <h2 className="mt-4 text-2xl font-semibold text-ink">Drop your PDF here</h2>
@@ -80,7 +80,7 @@ export function UploadDropzone({ onAccepted, initialProgress = 100 }: UploadDrop
         <input ref={inputRef} id="pdf-upload" type="file" accept="application/pdf,.pdf" onChange={onInputChange} className="sr-only" />
         <label
           htmlFor="pdf-upload"
-          className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-md bg-ink px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+          className="brand-gradient inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:shadow-[0_14px_28px_rgba(32,104,248,0.22)]"
         >
           <FileUp size={18} aria-hidden="true" />
           Choose PDF
@@ -111,7 +111,7 @@ export function UploadDropzone({ onAccepted, initialProgress = 100 }: UploadDrop
             aria-valuenow={progress}
             className="h-2 overflow-hidden rounded-full bg-slate-200"
           >
-            <div className="h-full rounded-full bg-sea" style={{ width: `${progress}%` }} />
+            <div className="brand-gradient h-full rounded-full" style={{ width: `${progress}%` }} />
           </div>
         </div>
       ) : null}

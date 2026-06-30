@@ -14,7 +14,7 @@ from app.models import (
     ProcessingJobStatus,
 )
 from app.models.mixins import utc_now
-from app.services.vector import VectorService
+from app.services.vector import DOCUMENT_INTELLIGENCE_SOURCE_LIMIT, VectorService, build_overview_sources
 
 logger = logging.getLogger(__name__)
 DEFAULT_CHUNK_TARGET_TOKENS = 1000
@@ -174,6 +174,8 @@ def process_document(
 
     document.status = DocumentStatus.CHUNKING
     job.current_step = "chunking"
+    document.insight_payload = None
+    document.insight_generated_at = None
     db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))
     chunks = chunk_pages(document, pages)
     db.add_all(chunks)
@@ -188,6 +190,21 @@ def process_document(
     document.status = DocumentStatus.INDEXING
     job.current_step = "indexing"
     vector_service.upsert_document_chunks(document.user, document, chunks, vectors)
+
+    insight_generator = getattr(vector_service, "generate_document_insight", None)
+    if callable(insight_generator):
+        job.current_step = "analyzing"
+        db.commit()
+        try:
+            insight_payload = insight_generator(
+                build_overview_sources(chunks, limit=DOCUMENT_INTELLIGENCE_SOURCE_LIMIT)
+            )
+        except Exception:
+            logger.exception("Document insight generation failed", extra={"document_id": str(document.id)})
+        else:
+            if insight_payload:
+                document.insight_payload = insight_payload
+                document.insight_generated_at = utc_now()
 
     document.status = DocumentStatus.READY
     document.failure_code = None

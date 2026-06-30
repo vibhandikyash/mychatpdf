@@ -12,6 +12,8 @@ import {
   useRef,
   useState
 } from "react";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import { Columns2, FileText, GripVertical, Loader2, MessageCircle, SendHorizontal, Square } from "lucide-react";
 import { ChatMessage, Citation, WorkspaceDocument } from "../../types";
 import { documentStatusLabel, isProcessingStatus } from "./status";
@@ -402,7 +404,7 @@ export function DocumentWorkspace({
                     type="button"
                     onClick={() => void sendMessage(prompt)}
                     disabled={isGenerating}
-                    className="min-h-11 rounded-md border border-slate-200 px-3 py-2 text-left text-sm font-medium text-ink hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-11 rounded-md border border-slate-200 px-3 py-2 text-left text-sm font-medium text-ink hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {prompt}
                   </button>
@@ -432,7 +434,7 @@ export function DocumentWorkspace({
                 <article
                   key={message.id}
                   className={`rounded-lg border px-4 py-3 ${
-                    message.role === "user" ? "ml-auto max-w-[88%] border-ink bg-ink text-white" : "mr-auto max-w-[92%] border-slate-200 bg-white text-ink"
+                    message.role === "user" ? "brand-gradient ml-auto max-w-[88%] border-transparent text-white shadow-sm" : "mr-auto max-w-[92%] border-slate-200 bg-white text-ink"
                   }`}
                 >
                   {message.role === "assistant" && !message.content && message.id === streamingAssistant?.id ? (
@@ -480,7 +482,7 @@ export function DocumentWorkspace({
                 disabled={!isReady || isGenerating}
                 rows={3}
                 placeholder={isReady ? "Ask this document..." : "Waiting for processing to finish..."}
-                className="min-h-24 flex-1 resize-none rounded-md border border-slate-300 px-3 py-2 text-sm leading-6 text-ink disabled:bg-slate-100"
+                className="min-h-24 flex-1 resize-none rounded-md border border-slate-300 px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-sea focus:ring-4 focus:ring-teal-100 disabled:bg-slate-100"
               />
               {isGenerating ? (
                 <button
@@ -496,7 +498,7 @@ export function DocumentWorkspace({
                   type="submit"
                   aria-label="Send message"
                   disabled={!canSend}
-                  className="grid h-11 w-11 shrink-0 place-items-center rounded-md bg-sea text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  className="brand-gradient grid h-11 w-11 shrink-0 place-items-center rounded-md text-white shadow-sm hover:shadow-[0_12px_24px_rgba(32,104,248,0.22)] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                 >
                   <SendHorizontal size={18} aria-hidden="true" />
                 </button>
@@ -536,7 +538,7 @@ function WorkspaceViewControls({
             title={label}
             onClick={() => onModeChange(optionMode)}
             className={`grid h-9 w-10 place-items-center rounded text-sm transition ${
-              isActive ? "bg-white text-sea shadow-sm" : "text-slate-600 hover:bg-white hover:text-ink"
+              isActive ? "bg-teal-50 text-sea shadow-sm ring-1 ring-teal-100" : "text-slate-600 hover:bg-white hover:text-ink"
             }`}
           >
             <Icon size={17} aria-hidden="true" />
@@ -559,9 +561,9 @@ function ChatWelcomeCard({
   onPromptSelect: (prompt: string) => Promise<void> | void;
 }) {
   return (
-    <div className="mr-auto max-w-[92%] rounded-lg border border-slate-200 bg-white px-4 py-4 text-ink shadow-sm">
+    <div className="mr-auto max-w-[92%] rounded-lg border border-teal-100 bg-white px-4 py-4 text-ink shadow-sm">
       <div className="flex gap-3">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-teal-50 text-sea">
+        <span className="brand-gradient grid h-9 w-9 shrink-0 place-items-center rounded-lg text-white">
           <MessageCircle size={18} aria-hidden="true" />
         </span>
         <div className="min-w-0">
@@ -892,15 +894,21 @@ function renderInlineText(
 }
 
 function renderStrongText(text: string, keyPrefix: string) {
+  const normalizedText = stripLooseStrongMarkers(text);
+  const mathNodes = renderMathText(normalizedText, keyPrefix);
+  if (mathNodes) {
+    return mathNodes;
+  }
+
   const nodes: ReactNode[] = [];
   const strongPattern = /(\*\*|__)(.+?)\1/g;
   let cursor = 0;
   let matchIndex = 0;
   let match: RegExpExecArray | null;
 
-  while ((match = strongPattern.exec(text)) !== null) {
+  while ((match = strongPattern.exec(normalizedText)) !== null) {
     if (match.index > cursor) {
-      nodes.push(text.slice(cursor, match.index));
+      nodes.push(normalizedText.slice(cursor, match.index));
     }
 
     nodes.push(
@@ -912,11 +920,85 @@ function renderStrongText(text: string, keyPrefix: string) {
     matchIndex += 1;
   }
 
-  if (cursor < text.length) {
-    nodes.push(text.slice(cursor));
+  if (cursor < normalizedText.length) {
+    nodes.push(normalizedText.slice(cursor));
   }
 
   return nodes;
+}
+
+function stripLooseStrongMarkers(text: string) {
+  const starMarkers = text.match(/\*\*/g)?.length ?? 0;
+  const underscoreMarkers = text.match(/__/g)?.length ?? 0;
+  return text
+    .replace(/\*\*/g, starMarkers % 2 === 1 ? "" : "**")
+    .replace(/__/g, underscoreMarkers % 2 === 1 ? "" : "__");
+}
+
+function renderMathText(text: string, keyPrefix: string) {
+  const mathPattern = /(\\\[((?:.|\n)+?)\\\]|\\\(((?:.|\n)+?)\\\)|\$\$((?:.|\n)+?)\$\$|\$([^$\n]+?)\$)/g;
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  let matchIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = mathPattern.exec(text)) !== null) {
+    if (match.index > cursor) {
+      nodes.push(...renderStrongText(text.slice(cursor, match.index), `${keyPrefix}-pre-math-${matchIndex}`));
+    }
+
+    const expression = match[2] ?? match[4] ?? match[5] ?? match[6] ?? "";
+    const displayMode = Boolean(match[2] ?? match[5]);
+    nodes.push(
+      <MathExpression
+        key={`${keyPrefix}-math-${matchIndex}`}
+        displayMode={displayMode}
+        expression={expression}
+        fallback={match[0]}
+      />
+    );
+
+    cursor = match.index + match[0].length;
+    matchIndex += 1;
+  }
+
+  if (!nodes.length) {
+    return null;
+  }
+
+  if (cursor < text.length) {
+    nodes.push(...renderStrongText(text.slice(cursor), `${keyPrefix}-post-math`));
+  }
+
+  return nodes;
+}
+
+function MathExpression({
+  displayMode,
+  expression,
+  fallback
+}: {
+  displayMode: boolean;
+  expression: string;
+  fallback: string;
+}) {
+  try {
+    const html = katex.renderToString(expression, {
+      displayMode,
+      strict: "ignore",
+      throwOnError: false,
+      trust: false
+    });
+
+    return (
+      <span
+        className={displayMode ? "mychatpdf-math-display block overflow-x-auto py-1" : "mychatpdf-math-inline"}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    );
+  } catch {
+    return <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.92em]">{fallback}</code>;
+  }
 }
 
 function InlinePageReferences({
@@ -949,7 +1031,7 @@ function InlinePageReferences({
               isUserMessage
                 ? "bg-white/15 text-white ring-1 ring-white/25 hover:bg-white/25"
                 : isActive
-                  ? "bg-sea text-white"
+                  ? "brand-gradient text-white"
                   : "bg-teal-50 text-sea ring-1 ring-teal-100 hover:bg-teal-100"
             }`}
             title={`Open ${reference.label}`}

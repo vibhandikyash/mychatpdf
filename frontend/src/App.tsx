@@ -248,7 +248,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white px-4 py-5">
       <Link to="/app" onClick={onNavigate} className="mb-5 flex items-center gap-3 rounded-lg px-1 text-ink">
-        <BrandLockup markClassName="h-11 w-11 shrink-0" />
+        <BrandLockup markClassName="h-12 w-auto max-w-[220px] object-contain" />
       </Link>
 
       <Link
@@ -256,8 +256,8 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         onClick={onNavigate}
         className={`mb-5 inline-flex min-h-12 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${
           location.pathname === "/app"
-            ? "bg-ink text-white ring-4 ring-teal-100"
-            : "bg-ink text-white hover:bg-slate-800"
+            ? "brand-gradient text-white shadow-sm ring-4 ring-teal-100"
+            : "brand-gradient text-white shadow-sm hover:shadow-[0_14px_28px_rgba(32,104,248,0.22)]"
         }`}
       >
         <FilePlus2 size={18} aria-hidden="true" />

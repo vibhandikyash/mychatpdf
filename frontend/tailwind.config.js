@@ -6,7 +6,20 @@ export default {
       colors: {
         ink: "#17212b",
         mist: "#f6f8fb",
-        sea: "#0f766e",
+        sea: "#2068f8",
+        brand: {
+          blue: "#2068f8",
+          violet: "#8040f0",
+          ice: "#eef4ff",
+          lavender: "#f4efff"
+        },
+        teal: {
+          50: "#eef4ff",
+          100: "#dbe8ff",
+          200: "#bfd6ff",
+          800: "#1d4ed8",
+          900: "#1e3a8a"
+        },
         coral: "#d95f43"
       },
       boxShadow: {

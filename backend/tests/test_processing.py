@@ -2,6 +2,7 @@ from app.models import Document, DocumentStatus, ProcessingJob, ProcessingJobSta
 from app.models import DocumentChunk
 from app.services.processing import ExtractedPage, MaxPagesExceededError, NoExtractableTextError, process_document
 from app.services.processing import chunk_pages
+from app.services.vector import DOCUMENT_INTELLIGENCE_VERSION
 
 
 class NoTextExtractor:
@@ -49,6 +50,36 @@ class RecordingVectorService:
                 "vector_count": len(vectors),
             }
         )
+
+
+class InsightVectorService(RecordingVectorService):
+    def __init__(self):
+        super().__init__()
+        self.insight_sources = []
+
+    def generate_document_insight(self, sources):
+        self.insight_sources = sources
+        return {
+            "version": DOCUMENT_INTELLIGENCE_VERSION,
+            "summary": "- Summary from cache (p. 1)",
+            "key_takeaways": "- Takeaway from cache (p. 1)",
+            "action_items": "- No explicit action items found in the provided context.",
+            "attention_points": "- Pay attention to the core concept (p. 2)",
+            "sources": [
+                {
+                    "chunk_id": source.chunk_id,
+                    "page_start": source.page_start,
+                    "page_end": source.page_end,
+                    "excerpt": source.excerpt,
+                }
+                for source in sources
+            ],
+        }
+
+
+class FailingInsightVectorService(RecordingVectorService):
+    def generate_document_insight(self, _sources):
+        raise RuntimeError("insight unavailable")
 
 
 def test_no_text_processing_marks_document_and_job_failed(db_session):
@@ -137,6 +168,76 @@ def test_text_processing_stores_chunks_indexes_vectors_and_marks_ready(db_sessio
             "vector_count": 2,
         }
     ]
+
+
+def test_text_processing_stores_document_insight_cache(db_session):
+    user = User(clerk_user_id="user_insight", email="insight@example.com")
+    document = Document(
+        user=user,
+        original_filename="text.pdf",
+        content_type="application/pdf",
+        file_size_bytes=200,
+        status=DocumentStatus.UPLOADED,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pdf",
+        pinecone_namespace="test",
+    )
+    job = ProcessingJob(
+        user=user,
+        document=document,
+        status=ProcessingJobStatus.QUEUED,
+        current_step="queued",
+    )
+    db_session.add_all([user, document, job])
+    db_session.commit()
+    vector_service = InsightVectorService()
+
+    process_document(
+        db_session,
+        document.id,
+        extractor=TextExtractor(),
+        vector_service=vector_service,
+    )
+
+    db_session.refresh(document)
+    assert document.status == DocumentStatus.READY
+    assert document.insight_payload["summary"] == "- Summary from cache (p. 1)"
+    assert document.insight_payload["sources"][0]["page_start"] == 1
+    assert document.insight_generated_at is not None
+    assert [source.page_start for source in vector_service.insight_sources] == [1, 2]
+
+
+def test_text_processing_continues_when_document_insight_fails(db_session):
+    user = User(clerk_user_id="user_insight_fail", email="insight-fail@example.com")
+    document = Document(
+        user=user,
+        original_filename="text.pdf",
+        content_type="application/pdf",
+        file_size_bytes=200,
+        status=DocumentStatus.UPLOADED,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pdf",
+        pinecone_namespace="test",
+    )
+    job = ProcessingJob(
+        user=user,
+        document=document,
+        status=ProcessingJobStatus.QUEUED,
+        current_step="queued",
+    )
+    db_session.add_all([user, document, job])
+    db_session.commit()
+
+    process_document(
+        db_session,
+        document.id,
+        extractor=TextExtractor(),
+        vector_service=FailingInsightVectorService(),
+    )
+
+    db_session.refresh(document)
+    assert document.status == DocumentStatus.READY
+    assert document.insight_payload is None
 
 
 def test_chunk_pages_splits_long_pages_with_token_overlap(db_session):

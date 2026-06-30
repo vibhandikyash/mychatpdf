@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
@@ -40,6 +40,8 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     wasabi_object_key: Mapped[str] = mapped_column(String(1024))
     pinecone_namespace: Mapped[str] = mapped_column(String(255))
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    insight_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    insight_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

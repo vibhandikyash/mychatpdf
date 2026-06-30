@@ -77,7 +77,7 @@ export function PdfLoadFailure({
           <button
             type="button"
             onClick={onRetry}
-            className="inline-flex h-9 items-center gap-2 rounded-md bg-sea px-3 text-sm font-semibold text-white hover:bg-teal-800"
+            className="brand-gradient inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold text-white shadow-sm hover:shadow-[0_12px_24px_rgba(32,104,248,0.22)]"
           >
             <RefreshCw size={15} aria-hidden="true" />
             Retry smooth viewer

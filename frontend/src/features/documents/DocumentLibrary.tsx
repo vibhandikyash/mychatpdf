@@ -21,13 +21,13 @@ export function DocumentLibrary({ documents, onOpen, onDelete, onRetry }: Docume
       </div>
 
       {documents.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center shadow-panel">
+        <div className="brand-soft-surface rounded-lg border border-dashed border-teal-200 p-8 text-center shadow-panel">
           <h2 className="text-xl font-semibold text-ink">No PDFs yet</h2>
           <p className="mt-2 text-sm text-slate-600">Upload a text-based PDF to start asking grounded questions.</p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-panel">
-          <div className="hidden grid-cols-[minmax(220px,1.4fr)_150px_120px_130px_180px] gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid">
+        <div className="overflow-hidden rounded-lg border border-teal-100 bg-white shadow-panel">
+          <div className="hidden grid-cols-[minmax(220px,1.4fr)_150px_120px_130px_180px] gap-4 border-b border-teal-100 bg-teal-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600 md:grid">
             <span>File</span>
             <span>Status</span>
             <span>Pages</span>
@@ -42,13 +42,13 @@ export function DocumentLibrary({ documents, onOpen, onDelete, onRetry }: Docume
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-3">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-slate-100 text-sea">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-teal-50 text-sea">
                       <FileText size={20} aria-hidden="true" />
                     </span>
                     <div className="min-w-0">
                       <p className="truncate font-medium text-ink">{document.originalFilename}</p>
                       <p className="text-sm text-slate-500">
-                        Uploaded {formatDate(document.createdAt)} · Last opened {formatDate(document.lastOpenedAt)}
+                        Uploaded {formatDate(document.createdAt)} - Last opened {formatDate(document.lastOpenedAt)}
                       </p>
                     </div>
                   </div>
@@ -63,7 +63,7 @@ export function DocumentLibrary({ documents, onOpen, onDelete, onRetry }: Docume
                     type="button"
                     onClick={() => onOpen?.(document.id)}
                     disabled={document.status === "deleting"}
-                    className="inline-flex min-h-10 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-medium text-ink hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex min-h-10 items-center gap-2 rounded-md border border-teal-100 px-3 text-sm font-medium text-ink hover:border-sea hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <ExternalLink size={16} aria-hidden="true" />
                     Open
@@ -72,7 +72,7 @@ export function DocumentLibrary({ documents, onOpen, onDelete, onRetry }: Docume
                     <button
                       type="button"
                       onClick={() => onRetry?.(document.id)}
-                      className="inline-flex min-h-10 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-medium text-ink hover:bg-slate-50"
+                      className="inline-flex min-h-10 items-center gap-2 rounded-md border border-teal-100 px-3 text-sm font-medium text-ink hover:border-sea hover:bg-teal-50"
                     >
                       <RefreshCw size={16} aria-hidden="true" />
                       Retry

@@ -34,17 +34,19 @@ export function UploadHome({ documents, onOpenDocument, onUploadFile }: UploadHo
   const processingDocuments = documents.filter((document) => isProcessingStatus(document.status));
 
   return (
-    <main className="min-h-full bg-white px-4 py-8 sm:px-6 lg:px-8">
+    <main className="min-h-full bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_52%,#ffffff_100%)] px-4 py-8 sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">
         <section className="mx-auto w-full max-w-4xl text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.16em] text-sea">Workspace</p>
-          <h1 className="mt-2 text-4xl font-semibold tracking-tight text-ink sm:text-5xl">Chat with any PDF</h1>
+          <h1 className="mt-2 text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
+            Chat with any <span className="text-sea">PDF</span>
+          </h1>
           <p className="mx-auto mt-3 max-w-2xl text-base leading-7 text-slate-600">
             Upload a text-based PDF, ask questions, and jump back to cited pages from the answer.
           </p>
         </section>
 
-        <section className="mx-auto w-full max-w-5xl rounded-2xl border border-slate-200 bg-white p-5 shadow-panel">
+        <section className="mx-auto w-full max-w-5xl rounded-2xl border border-teal-100 bg-white p-5 shadow-panel">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.86fr)]">
             <UploadDropzone
               onAccepted={(file) => {
@@ -54,7 +56,7 @@ export function UploadHome({ documents, onOpenDocument, onUploadFile }: UploadHo
               initialProgress={72}
             />
 
-            <div className="flex min-h-[280px] flex-col rounded-xl border border-slate-200 bg-slate-50 p-5">
+            <div className="brand-soft-surface flex min-h-[280px] flex-col rounded-xl border border-teal-100 p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sea">Supported flow</p>
               <h2 className="mt-1 text-2xl font-semibold tracking-tight text-ink">Upload once, chat with citations</h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
@@ -62,7 +64,7 @@ export function UploadHome({ documents, onOpenDocument, onUploadFile }: UploadHo
               </p>
               <div className="mt-5 grid gap-3">
                 {supportedFlow.map((item) => (
-                  <div key={item.title} className="flex gap-3 rounded-lg border border-slate-200 bg-white p-3">
+                  <div key={item.title} className="flex gap-3 rounded-lg border border-teal-100 bg-white p-3">
                     <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-teal-50 text-sea">
                       {item.icon}
                     </span>
@@ -84,7 +86,7 @@ export function UploadHome({ documents, onOpenDocument, onUploadFile }: UploadHo
         </section>
 
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-panel">
+          <section className="rounded-2xl border border-teal-100 bg-white p-5 shadow-panel">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sea">Library</p>
@@ -105,7 +107,7 @@ export function UploadHome({ documents, onOpenDocument, onUploadFile }: UploadHo
               tone="teal"
             />
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-panel">
+            <section className="rounded-2xl border border-teal-100 bg-white p-5 shadow-panel">
               <div className="mb-4 flex items-center gap-3">
                 <span className="grid h-10 w-10 place-items-center rounded-lg bg-amber-50 text-amber-700">
                   <FileClock size={20} aria-hidden="true" />
@@ -141,7 +143,7 @@ function RecentDocuments({
 }) {
   if (documents.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+      <div className="brand-soft-surface rounded-xl border border-dashed border-teal-200 p-6 text-center">
         <h3 className="font-semibold text-ink">No PDFs yet</h3>
         <p className="mt-1 text-sm text-slate-600">Upload a PDF above to start asking grounded questions.</p>
       </div>
@@ -206,7 +208,7 @@ function DashboardInfoCard({
   const toneClass = tone === "teal" ? "bg-teal-50 text-sea" : "bg-amber-50 text-amber-700";
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-panel">
+    <section className="rounded-2xl border border-teal-100 bg-white p-5 shadow-panel">
       <div className="flex items-center gap-3">
         <span className={`grid h-10 w-10 place-items-center rounded-lg ${toneClass}`}>{icon}</span>
         <div>

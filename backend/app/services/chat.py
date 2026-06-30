@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from collections.abc import Iterator
+from dataclasses import replace
 from uuid import UUID
 
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     Chat,
     Document,
+    DocumentChunk,
     DocumentStatus,
     Message,
     MessageRole,
@@ -18,7 +20,16 @@ from app.models import (
     User,
 )
 from app.models.mixins import utc_now
-from app.services.vector import VectorService
+from app.services.vector import (
+    DOCUMENT_INTELLIGENCE_SOURCE_LIMIT,
+    DOCUMENT_INTELLIGENCE_VERSION,
+    DOCUMENT_OVERVIEW_SOURCE_LIMIT,
+    RetrievedSource,
+    VectorService,
+    build_overview_sources,
+    is_front_matter_chunk,
+    question_needs_short_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +49,71 @@ FOLLOW_UP_TERMS = {
     "above",
     "same",
 }
+MAX_CONTEXT_SOURCES = 8
+EXACT_REFERENCE_SOURCE_LIMIT = 3
+KEYWORD_SOURCE_LIMIT = 3
+KEYWORD_STOPWORDS = {
+    "about",
+    "answer",
+    "could",
+    "document",
+    "explain",
+    "file",
+    "from",
+    "give",
+    "should",
+    "summarize",
+    "summary",
+    "tell",
+    "that",
+    "this",
+    "what",
+    "when",
+    "where",
+    "which",
+    "with",
+    "would",
+}
+SHORT_KEYWORD_TERMS = {"law"}
+DOCUMENT_INSIGHT_ACTION_PHRASES = (
+    "action items",
+    "recommended actions",
+    "what actions",
+    "what should i do",
+    "what should we do",
+    "next steps",
+    "recommendations",
+)
+DOCUMENT_INSIGHT_ATTENTION_PHRASES = (
+    "what should i pay attention to",
+    "what should we pay attention to",
+    "what should i focus on",
+    "what should we focus on",
+    "important topics",
+    "study guide",
+)
+DOCUMENT_INSIGHT_TAKEAWAY_PHRASES = (
+    "key takeaways",
+    "main points",
+    "important points",
+)
+DOCUMENT_INSIGHT_SUMMARY_PHRASES = (
+    "summarize this document",
+    "summarize the document",
+    "summarize this file",
+    "summarize the file",
+    "summary of this document",
+    "summary of the file",
+    "full document summary",
+    "overall summary",
+    "give me a summary",
+    "document summary",
+    "document overview",
+    "overview of this document",
+    "what is this document about",
+    "what is this file about",
+    "what does this document cover",
+)
 
 
 def get_or_create_chat(db: Session, user: User, document: Document) -> Chat:
@@ -58,10 +134,12 @@ def question_needs_conversation_context(question: str) -> bool:
     words = re.findall(r"[a-z0-9']+", question.lower())
     if not words:
         return False
-    return len(words) <= 5 or any(word in FOLLOW_UP_TERMS for word in words)
+    return any(word in FOLLOW_UP_TERMS for word in words)
 
 
 def build_contextual_question(current_question: str, prior_messages: list[Message]) -> str:
+    if question_needs_document_overview(current_question):
+        return current_question
     if not question_needs_conversation_context(current_question):
         return current_question
 
@@ -83,6 +161,259 @@ def build_contextual_question(current_question: str, prior_messages: list[Messag
         history = history[-RECENT_HISTORY_MAX_CHARS:]
 
     return f"Recent conversation:\n{history}\n\nCurrent question: {current_question}"
+
+
+def question_needs_document_overview(question: str) -> bool:
+    return document_insight_field(question) is not None
+
+
+def document_insight_field(question: str) -> str | None:
+    text = question.lower()
+    if "selected passage" in text:
+        return None
+    if any(phrase in text for phrase in DOCUMENT_INSIGHT_ACTION_PHRASES):
+        return "action_items"
+    if any(phrase in text for phrase in DOCUMENT_INSIGHT_ATTENTION_PHRASES):
+        return "attention_points"
+    if any(phrase in text for phrase in DOCUMENT_INSIGHT_TAKEAWAY_PHRASES):
+        return "key_takeaways"
+    if any(phrase in text for phrase in DOCUMENT_INSIGHT_SUMMARY_PHRASES):
+        return "summary"
+    return None
+
+
+def _reference_phrases(question: str) -> tuple[str | None, list[str]]:
+    text = question.lower()
+    chapter_matches = re.findall(r"\bchapter\s+(\d+)\b", text)
+    phrases = [
+        f"{match.group(1)} {match.group(2)}"
+        for match in re.finditer(
+            r"\b(sample problem|checkpoint|question|problem)\s+(\d+(?:\.\d+)*)\b",
+            text,
+        )
+    ]
+    return (f"chapter {chapter_matches[-1]}" if chapter_matches else None, phrases)
+
+
+def _exact_reference_sources(db: Session, document: Document, question: str) -> list[RetrievedSource]:
+    chapter_phrase, phrases = _reference_phrases(question)
+    if not phrases:
+        return []
+
+    sources: list[RetrievedSource] = []
+    chunks = db.scalars(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document.id)
+        .order_by(DocumentChunk.chunk_index)
+    )
+    for chunk in chunks:
+        text = chunk.text.lower()
+        if chapter_phrase and chapter_phrase not in text:
+            continue
+        if not any(phrase in text for phrase in phrases):
+            continue
+        sources.append(
+            RetrievedSource(
+                chunk_id=str(chunk.id),
+                page_start=chunk.page_start,
+                page_end=chunk.page_end,
+                excerpt=chunk.text_excerpt,
+                score=None,
+                context=chunk.text,
+            )
+        )
+        if len(sources) == EXACT_REFERENCE_SOURCE_LIMIT:
+            break
+    return sources
+
+
+def _keyword_sources(db: Session, document: Document, question: str) -> list[RetrievedSource]:
+    terms = [
+        word
+        for word in re.findall(r"[a-z0-9]+", question.lower())
+        if (len(word) >= 4 or word in SHORT_KEYWORD_TERMS) and word not in KEYWORD_STOPWORDS
+    ]
+    if not terms:
+        return []
+
+    chunks = list(
+        db.scalars(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == document.id)
+            .order_by(DocumentChunk.chunk_index)
+        )
+    )
+    scored_chunks: list[tuple[int, DocumentChunk]] = []
+    minimum_matches = min(2, len(terms))
+    for chunk in chunks:
+        if is_front_matter_chunk(chunk, len(chunks)):
+            continue
+        text = chunk.text.lower()
+        match_count = sum(1 for term in terms if term in text)
+        if match_count < minimum_matches:
+            continue
+        scored_chunks.append((match_count, chunk))
+
+    scored_chunks.sort(key=lambda item: (-item[0], item[1].chunk_index))
+    sources: list[RetrievedSource] = []
+    for _, chunk in scored_chunks[:KEYWORD_SOURCE_LIMIT]:
+        sources.append(
+            RetrievedSource(
+                chunk_id=str(chunk.id),
+                page_start=chunk.page_start,
+                page_end=chunk.page_end,
+                excerpt=chunk.text_excerpt,
+                score=None,
+                context=chunk.text,
+            )
+        )
+    return sources
+
+
+def _overview_sources(db: Session, document: Document) -> list[RetrievedSource]:
+    chunks = list(
+        db.scalars(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == document.id)
+            .order_by(DocumentChunk.chunk_index)
+        )
+    )
+    return build_overview_sources(chunks)
+
+
+def _cached_insight_answer(document: Document, question: str) -> str | None:
+    field = document_insight_field(question)
+    if field is None:
+        return None
+    if field == "summary" and not question_needs_short_summary(question):
+        return None
+    payload = document.insight_payload if isinstance(document.insight_payload, dict) else {}
+    if payload.get("version") != DOCUMENT_INTELLIGENCE_VERSION:
+        return None
+    answer = payload.get(field)
+    return answer.strip() if isinstance(answer, str) and answer.strip() else None
+
+
+def _question_can_use_document_insight(question: str) -> bool:
+    field = document_insight_field(question)
+    return field is not None and (field != "summary" or question_needs_short_summary(question))
+
+
+def _ensure_document_insight(db: Session, document: Document, vector_service: VectorService) -> None:
+    if (
+        isinstance(document.insight_payload, dict)
+        and document.insight_payload.get("version") == DOCUMENT_INTELLIGENCE_VERSION
+        and document.insight_payload.get("summary")
+    ):
+        return
+    insight_generator = getattr(vector_service, "generate_document_insight", None)
+    if not callable(insight_generator):
+        return
+
+    chunks = list(
+        db.scalars(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == document.id)
+            .order_by(DocumentChunk.chunk_index)
+        )
+    )
+    try:
+        insight_payload = insight_generator(
+            build_overview_sources(chunks, limit=DOCUMENT_INTELLIGENCE_SOURCE_LIMIT)
+        )
+    except Exception:
+        logger.exception("Lazy document insight generation failed", extra={"document_id": str(document.id)})
+        return
+    if insight_payload:
+        document.insight_payload = insight_payload
+        document.insight_generated_at = utc_now()
+        db.commit()
+        db.refresh(document)
+
+
+def _answer_page_references(answer: str) -> list[tuple[int, int]]:
+    references: list[tuple[int, int]] = []
+    for citation in re.finditer(r"\((?:p|pp)\.\s*([^)]+)\)", answer, flags=re.I):
+        for page_match in re.finditer(r"\d+(?:\s*[-–—]\s*\d+)?", citation.group(1)):
+            start_text, *end_text = re.split(r"\s*[-–—]\s*", page_match.group(0), maxsplit=1)
+            page_start = int(start_text)
+            page_end = int(end_text[0]) if end_text else page_start
+            references.append((page_start, max(page_start, page_end)))
+    return references
+
+
+def _cached_insight_sources(document: Document, answer: str) -> list[RetrievedSource]:
+    payload = document.insight_payload if isinstance(document.insight_payload, dict) else {}
+    sources = payload.get("sources")
+    if not isinstance(sources, list):
+        return []
+
+    retrieved_sources: list[RetrievedSource] = []
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        try:
+            UUID(str(source.get("chunk_id")))
+            page_start = int(source.get("page_start", 1))
+            page_end = int(source.get("page_end", page_start))
+        except (TypeError, ValueError):
+            continue
+        retrieved_sources.append(
+            RetrievedSource(
+                chunk_id=str(source["chunk_id"]),
+                page_start=page_start,
+                page_end=page_end,
+                excerpt=str(source.get("excerpt", "")),
+                score=None,
+            )
+        )
+
+    cited_pages = _answer_page_references(answer)
+    if not cited_pages:
+        return retrieved_sources[:DOCUMENT_OVERVIEW_SOURCE_LIMIT]
+    cited_sources = [
+        source
+        for source in retrieved_sources
+        if any(page_start <= source.page_end and page_end >= source.page_start for page_start, page_end in cited_pages)
+    ]
+    return cited_sources[:DOCUMENT_OVERVIEW_SOURCE_LIMIT]
+
+
+def _hydrate_source_context(db: Session, document: Document, sources: list[RetrievedSource]) -> list[RetrievedSource]:
+    chunk_ids = []
+    for source in sources:
+        try:
+            chunk_ids.append(UUID(source.chunk_id))
+        except ValueError:
+            continue
+    if not chunk_ids:
+        return sources
+
+    chunks = db.scalars(
+        select(DocumentChunk).where(
+            DocumentChunk.document_id == document.id,
+            DocumentChunk.id.in_(chunk_ids),
+        )
+    )
+    text_by_chunk_id = {str(chunk.id): chunk.text for chunk in chunks}
+    return [
+        replace(source, context=source.context or text_by_chunk_id.get(source.chunk_id))
+        for source in sources
+    ]
+
+
+def _merge_sources(*source_groups: list[RetrievedSource], limit: int = MAX_CONTEXT_SOURCES) -> list[RetrievedSource]:
+    merged: list[RetrievedSource] = []
+    seen_chunk_ids = set()
+    for sources in source_groups:
+        for source in sources:
+            if source.chunk_id in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(source.chunk_id)
+            merged.append(source)
+            if len(merged) == limit:
+                return merged
+    return merged
 
 
 def stream_chat_response(
@@ -126,12 +457,35 @@ def stream_chat_response(
     db.refresh(assistant_message)
 
     answer_parts: list[str] = []
+    sources: list[RetrievedSource] = []
     yield format_sse("message_start", {"message_id": str(assistant_message.id)})
     try:
-        sources = vector_service.query_document(user, document, contextual_question)
-        for token in vector_service.stream_answer_tokens(contextual_question, sources):
-            answer_parts.append(token)
-            yield format_sse("token", {"text": token})
+        needs_overview = question_needs_document_overview(content)
+        if needs_overview and _question_can_use_document_insight(content):
+            _ensure_document_insight(db, document, vector_service)
+        cached_answer = _cached_insight_answer(document, content) if needs_overview else None
+        if cached_answer:
+            sources = _hydrate_source_context(db, document, _cached_insight_sources(document, cached_answer))
+            answer_parts.append(cached_answer)
+            yield format_sse("token", {"text": cached_answer})
+        else:
+            exact_sources = _exact_reference_sources(db, document, contextual_question)
+            keyword_sources = _keyword_sources(db, document, contextual_question)
+            if needs_overview:
+                overview_sources = _overview_sources(db, document)
+                sources = _merge_sources(
+                    overview_sources,
+                    exact_sources,
+                    keyword_sources,
+                    limit=DOCUMENT_OVERVIEW_SOURCE_LIMIT,
+                )
+            else:
+                vector_sources = vector_service.query_document(user, document, contextual_question)
+                sources = _merge_sources(exact_sources, keyword_sources, vector_sources)
+            sources = _hydrate_source_context(db, document, sources)
+            for token in vector_service.stream_answer_tokens(contextual_question, sources):
+                answer_parts.append(token)
+                yield format_sse("token", {"text": token})
     except Exception as exc:
         logger.exception(
             "Chat response generation failed",

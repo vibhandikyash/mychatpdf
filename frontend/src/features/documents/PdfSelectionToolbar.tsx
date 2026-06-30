@@ -35,7 +35,7 @@ export function PdfSelectionToolbar({ copyStatus, selection, isDisabled, onActio
       role="toolbar"
       aria-label="Selected text actions"
       onMouseDown={(event) => event.preventDefault()}
-      className="fixed z-50 flex -translate-x-1/2 -translate-y-full items-center rounded-md bg-ink text-white shadow-panel"
+      className="brand-gradient fixed z-50 flex -translate-x-1/2 -translate-y-full items-center rounded-md text-white shadow-panel"
       style={{ left: selection.left, top: selection.top }}
     >
       {actions.map(({ action, label }, index) => (

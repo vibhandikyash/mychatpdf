@@ -7,10 +7,15 @@ declare const process: {
 };
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), "");
+  const workspaceRoot = `${process.cwd()}/..`;
+  const env = {
+    ...loadEnv(mode, workspaceRoot, ""),
+    ...loadEnv(mode, process.cwd(), ""),
+  };
   const apiProxyTarget = env.VITE_DEV_API_PROXY_TARGET;
 
   return {
+    envDir: workspaceRoot,
     plugins: [react()],
     server: {
       proxy: apiProxyTarget

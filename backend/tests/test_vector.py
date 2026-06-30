@@ -3,7 +3,12 @@ from types import SimpleNamespace
 
 from app.core.config import Settings
 from app.models import Document, DocumentChunk, DocumentStatus, User
-from app.services.vector import RetrievedSource, VectorService
+from app.services.vector import (
+    DOCUMENT_INTELLIGENCE_SYSTEM_PROMPT,
+    RetrievedSource,
+    VectorService,
+    question_needs_short_summary,
+)
 
 
 def test_embed_texts_passes_configured_openai_dimensions(monkeypatch):
@@ -156,6 +161,109 @@ def test_stream_answer_tokens_omits_temperature_by_default(monkeypatch):
     assert "temperature" not in calls[0]
 
 
+def test_stream_answer_tokens_caps_plain_document_summaries(monkeypatch):
+    calls = []
+
+    class FakeDelta:
+        content = "Answer"
+
+    class FakeChoice:
+        delta = FakeDelta()
+
+    class FakeEvent:
+        choices = [FakeChoice()]
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return [FakeEvent()]
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            self.api_key = api_key
+            self.chat = FakeChat()
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    source = RetrievedSource(
+        chunk_id="chunk-id",
+        page_start=1,
+        page_end=1,
+        excerpt="Relevant context.",
+        score=0.9,
+    )
+
+    list(VectorService(Settings(openai_api_key="sk-test")).stream_answer_tokens("Summarize this document.", [source]))
+
+    assert calls[0]["max_completion_tokens"] == 320
+
+
+def test_generate_document_insight_returns_structured_cache(monkeypatch):
+    calls = []
+
+    class FakeMessage:
+        content = (
+            '{"summary":"- Summary (p. 1)",'
+            '"key_takeaways":"- Takeaway (p. 1)",'
+            '"action_items":"- Apply the concepts as a study task (p. 1)",'
+            '"attention_points":"- Attention point (p. 2)"}'
+        )
+
+    class FakeChoice:
+        message = FakeMessage()
+
+    class FakeResponse:
+        choices = [FakeChoice()]
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return FakeResponse()
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            self.api_key = api_key
+            self.chat = FakeChat()
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    sources = [
+        RetrievedSource(
+            chunk_id="00000000-0000-0000-0000-000000000001",
+            page_start=1,
+            page_end=1,
+            excerpt="First source.",
+            score=None,
+            context="First source.",
+        ),
+        RetrievedSource(
+            chunk_id="00000000-0000-0000-0000-000000000002",
+            page_start=2,
+            page_end=2,
+            excerpt="Second source.",
+            score=None,
+            context="Second source.",
+        ),
+    ]
+
+    payload = VectorService(Settings(openai_api_key="sk-test")).generate_document_insight(sources)
+
+    assert payload["summary"] == "- Summary"
+    assert payload["key_takeaways"] == "- Takeaway"
+    assert payload["action_items"] == "- No explicit action items were found in the provided context."
+    assert payload["attention_points"] == "- Attention point"
+    assert payload["sources"][1]["page_start"] == 2
+    assert calls[0]["response_format"] == {"type": "json_object"}
+    assert "Do not include page citations" in DOCUMENT_INTELLIGENCE_SYSTEM_PROMPT
+    assert "Do not convert topics, exercises, formulas, study advice, or reader activities into action items" in (
+        DOCUMENT_INTELLIGENCE_SYSTEM_PROMPT
+    )
+
+
 def test_stream_answer_tokens_without_openai_includes_page_citation():
     source = RetrievedSource(
         chunk_id="chunk-id",
@@ -168,6 +276,12 @@ def test_stream_answer_tokens_without_openai_includes_page_citation():
     tokens = list(VectorService(Settings(openai_api_key=None)).stream_answer_tokens("Question?", [source]))
 
     assert tokens == ["Based on the retrieved document context, Relevant context. (pp. 2-3)"]
+
+
+def test_short_summary_detection_keeps_detailed_requests_uncapped():
+    assert question_needs_short_summary("Summarize this document.") is True
+    assert question_needs_short_summary("Give me a detailed summary of this document.") is False
+    assert question_needs_short_summary("Summarize this selected passage.") is False
 
 
 def test_delete_document_vectors_uses_stored_vector_ids(db_session, monkeypatch):

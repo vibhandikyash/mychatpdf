@@ -60,7 +60,7 @@ export function ButtonContent({
   );
 }
 
-export function AuthUnavailable({ title }: { title: string }) {
+export function AuthUnavailable({ title }: { title: ReactNode }) {
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
       <h3 className="text-base font-semibold text-amber-950">{title}</h3>
@@ -96,7 +96,7 @@ export const inputClassName =
   "h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base leading-6 text-ink shadow-sm outline-none transition placeholder:text-slate-500 focus:border-sea focus:ring-4 focus:ring-teal-100 disabled:cursor-not-allowed disabled:bg-slate-50";
 
 export const primaryButtonClassName =
-  "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-ink px-4 py-3 text-base font-semibold leading-6 text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400";
+  "brand-gradient inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md px-4 py-3 text-base font-semibold leading-6 text-white shadow-sm transition hover:shadow-[0_14px_28px_rgba(32,104,248,0.24)] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-400 disabled:shadow-none";
 
 export const secondaryButtonClassName =
   "inline-flex min-h-12 w-full items-center justify-center gap-3 rounded-md border border-slate-300 bg-white px-4 py-3 text-base font-semibold leading-6 text-ink shadow-sm transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500";
