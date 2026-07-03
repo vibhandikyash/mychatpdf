@@ -28,6 +28,20 @@ export interface Citation {
   pageEnd: number;
   excerpt: string;
   score?: number;
+  documentFilename?: string;
+}
+
+export interface ChatDocumentRef {
+  id: string;
+  originalFilename: string;
+}
+
+export interface ChatSummary {
+  id: string;
+  title: string | null;
+  documents: ChatDocumentRef[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ChatMessage {

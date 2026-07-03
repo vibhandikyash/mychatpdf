@@ -59,7 +59,7 @@ interface ParsedServerSentEvent {
   data: Record<string, unknown>;
 }
 
-interface SendChatMessageHandlers {
+export interface SendChatMessageHandlers {
   signal?: AbortSignal;
   onStart?: (messageId: string) => void;
   onToken?: (token: string) => void;
@@ -311,13 +311,13 @@ export async function getDocumentChat(client: ApiClient, documentId: string): Pr
   }));
 }
 
-export async function sendChatMessage(
+export async function streamAssistantMessage(
   client: ApiClient,
-  documentId: string,
+  path: string,
   content: string,
   handlers: SendChatMessageHandlers = {}
 ): Promise<ChatMessage> {
-  const response = await client.requestStream(`/api/documents/${documentId}/chat/stream`, {
+  const response = await client.requestStream(path, {
     method: "POST",
     body: JSON.stringify({ content }),
     signal: handlers.signal
@@ -364,6 +364,15 @@ export async function sendChatMessage(
     createdAt: new Date().toISOString(),
     sources
   };
+}
+
+export async function sendChatMessage(
+  client: ApiClient,
+  documentId: string,
+  content: string,
+  handlers: SendChatMessageHandlers = {}
+): Promise<ChatMessage> {
+  return streamAssistantMessage(client, `/api/documents/${documentId}/chat/stream`, content, handlers);
 }
 
 export async function deleteDocument(client: ApiClient, documentId: string) {
