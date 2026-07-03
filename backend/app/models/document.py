@@ -60,6 +60,10 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="document",
         cascade="all, delete-orphan",
     )
+    chat_links: Mapped[list["ChatDocument"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
     messages: Mapped[list["Message"]] = relationship(back_populates="document")
 
 

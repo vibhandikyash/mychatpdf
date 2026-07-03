@@ -25,10 +25,14 @@ class MessageStatus(str, Enum):
 class Chat(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "chats"
 
-    document_id: Mapped[UUID] = mapped_column(
+    # Legacy single-document link; single-doc chats keep it populated so the
+    # Phase 1 per-document routes stay a cheap column match. Scope lives in
+    # chat_documents.
+    document_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("documents.id", ondelete="CASCADE"),
         index=True,
+        nullable=True,
     )
     user_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -36,14 +40,44 @@ class Chat(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="chats")
-    document: Mapped["Document"] = relationship(back_populates="chats")
+    document: Mapped["Document | None"] = relationship(back_populates="chats")
+    document_links: Mapped[list["ChatDocument"]] = relationship(
+        back_populates="chat",
+        cascade="all, delete-orphan",
+        order_by="ChatDocument.position",
+    )
+    documents: Mapped[list["Document"]] = relationship(
+        secondary="chat_documents",
+        order_by="ChatDocument.position",
+        viewonly=True,
+    )
     messages: Mapped[list["Message"]] = relationship(
         back_populates="chat",
         cascade="all, delete-orphan",
         order_by="Message.created_at",
     )
+
+
+class ChatDocument(Base):
+    __tablename__ = "chat_documents"
+
+    chat_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("chats.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+    chat: Mapped["Chat"] = relationship(back_populates="document_links")
+    document: Mapped["Document"] = relationship(back_populates="chat_links")
 
 
 class Message(UUIDPrimaryKeyMixin, Base):
@@ -54,10 +88,11 @@ class Message(UUIDPrimaryKeyMixin, Base):
         ForeignKey("chats.id", ondelete="CASCADE"),
         index=True,
     )
-    document_id: Mapped[UUID] = mapped_column(
+    document_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("documents.id", ondelete="CASCADE"),
         index=True,
+        nullable=True,
     )
     user_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -71,7 +106,7 @@ class Message(UUIDPrimaryKeyMixin, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     user: Mapped["User"] = relationship(back_populates="messages")
-    document: Mapped["Document"] = relationship(back_populates="messages")
+    document: Mapped["Document | None"] = relationship(back_populates="messages")
     chat: Mapped["Chat"] = relationship(back_populates="messages")
     sources: Mapped[list["MessageSource"]] = relationship(
         back_populates="message",
