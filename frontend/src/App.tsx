@@ -5,6 +5,7 @@ import {
   FileText,
   Library,
   Menu,
+  MessagesSquare,
   X
 } from "lucide-react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
@@ -20,12 +21,15 @@ import {
   sendChatMessage,
   uploadDocument
 } from "./api/documents";
+import { deleteChat, getChat, listChats, renameChat, streamChatMessage } from "./api/chats";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";
 import { BrandLockup } from "./features/brand/Brand";
+import { ChatHistory } from "./features/chats/ChatHistory";
+import { ChatView } from "./features/chats/ChatView";
 import { DocumentLibrary } from "./features/documents/DocumentLibrary";
 import { DocumentWorkspace } from "./features/documents/DocumentWorkspace";
 import { UploadHome } from "./features/upload/UploadHome";
-import { ChatMessage, DocumentStatus, DocumentSummary, WorkspaceDocument } from "./types";
+import { ChatMessage, ChatSummary, DocumentStatus, DocumentSummary, WorkspaceDocument } from "./types";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const e2eAuthBypassEnabled = import.meta.env.VITE_E2E_AUTH_BYPASS === "true";
@@ -78,6 +82,26 @@ export function App() {
           <RequireAuth>
             <AppShell fullBleed>
               <WorkspaceRoute />
+            </AppShell>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/app/chats"
+        element={
+          <RequireAuth>
+            <AppShell>
+              <ChatsRoute />
+            </AppShell>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/app/chats/:chatId"
+        element={
+          <RequireAuth>
+            <AppShell fullBleed>
+              <ChatRoute />
             </AppShell>
           </RequireAuth>
         }
@@ -271,6 +295,9 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <NavItem to="/app/documents" icon={<Library size={17} aria-hidden="true" />} onNavigate={onNavigate}>
               Documents
             </NavItem>
+            <NavItem to="/app/chats" icon={<MessagesSquare size={17} aria-hidden="true" />} onNavigate={onNavigate}>
+              Conversations
+            </NavItem>
           </div>
         </section>
       </nav>
@@ -447,6 +474,178 @@ function LibraryRoute() {
         void retryDocumentProcessing(api, documentId).then(refreshDocuments).catch(() => undefined);
       }}
     />
+  );
+}
+
+function ChatsRoute() {
+  const navigate = useNavigate();
+  const api = useAuthenticatedApiClient();
+  const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    let cancelled = false;
+    void listChats(api)
+      .then((page) => {
+        if (!cancelled) {
+          setChats(page.items);
+          setNextCursor(page.nextCursor);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  async function loadMore() {
+    if (!api || !nextCursor || isLoadingMore) {
+      return;
+    }
+
+    setIsLoadingMore(true);
+    try {
+      const page = await listChats(api, nextCursor);
+      setChats((current) => [...current, ...page.items]);
+      setNextCursor(page.nextCursor);
+    } catch {
+      // Keep the loaded page on failure; the button stays available for retry.
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
+
+  return (
+    <ChatHistory
+      chats={chats}
+      hasMore={Boolean(nextCursor)}
+      isLoadingMore={isLoadingMore}
+      onOpen={(chat) =>
+        navigate(chat.documents.length === 1 ? `/app/documents/${chat.documents[0].id}` : `/app/chats/${chat.id}`)
+      }
+      onRename={(chatId, title) => {
+        if (!api) {
+          return;
+        }
+        void renameChat(api, chatId, title)
+          .then((updated) => setChats((current) => current.map((chat) => (chat.id === chatId ? updated : chat))))
+          .catch(() => undefined);
+      }}
+      onDelete={(chatId) => {
+        if (!api) {
+          return;
+        }
+        setChats((current) => current.filter((chat) => chat.id !== chatId));
+        void deleteChat(api, chatId).catch(() => undefined);
+      }}
+      onLoadMore={() => void loadMore()}
+    />
+  );
+}
+
+function ChatRoute() {
+  const { chatId } = useParams();
+  const api = useAuthenticatedApiClient();
+  const [chat, setChat] = useState<ChatSummary | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    if (!api || !chatId) {
+      return;
+    }
+
+    const apiClient = api;
+    const currentChatId = chatId;
+    let cancelled = false;
+
+    setChat(null);
+    setMessages([]);
+    setErrorMessage(null);
+    setIsLoading(true);
+
+    void getChat(apiClient, currentChatId)
+      .then((detail) => {
+        if (!cancelled) {
+          setChat(detail.chat);
+          setMessages(detail.messages);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setErrorMessage("Unable to load this conversation.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, chatId]);
+
+  async function handleSendMessage(content: string) {
+    if (!api || !chatId) {
+      return;
+    }
+
+    const localMessagePrefix = `local-${Date.now()}`;
+    const userMessage: ChatMessage = {
+      id: `${localMessagePrefix}-user`,
+      role: "user",
+      content,
+      createdAt: new Date().toISOString()
+    };
+    const pendingAssistantId = `${localMessagePrefix}-assistant`;
+    let streamedAssistantId = pendingAssistantId;
+    const assistantDraft: ChatMessage = {
+      id: pendingAssistantId,
+      role: "assistant",
+      content: "",
+      createdAt: new Date().toISOString(),
+      sources: []
+    };
+
+    setMessages((current) => [...current, userMessage, assistantDraft]);
+    setErrorMessage(null);
+
+    try {
+      const assistantMessage = await streamChatMessage(api, chatId, content, {
+        onStart: (messageId) => {
+          setMessages((current) => replaceMessageId(current, pendingAssistantId, messageId));
+          streamedAssistantId = messageId;
+        },
+        onToken: (token) => {
+          setMessages((current) => appendMessageContent(current, streamedAssistantId, token));
+        },
+        onSources: (sources) => {
+          setMessages((current) => updateMessageSources(current, streamedAssistantId, sources));
+        }
+      });
+      setMessages((current) => upsertMessage(current, streamedAssistantId, assistantMessage));
+    } catch (error) {
+      setMessages((current) => removeEmptyAssistantDraft(current, [pendingAssistantId, streamedAssistantId]));
+      setErrorMessage(readableChatError(error));
+    }
+  }
+
+  return (
+    <>
+      {errorMessage ? (
+        <div className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">{errorMessage}</div>
+      ) : null}
+      <ChatView chat={chat} messages={messages} isLoading={isLoading} onSendMessage={handleSendMessage} />
+    </>
   );
 }
 
