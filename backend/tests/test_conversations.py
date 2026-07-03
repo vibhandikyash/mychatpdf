@@ -46,7 +46,7 @@ def test_create_chat_returns_201_with_scoped_documents(authenticated_client, db_
     assert response.status_code == 201
     body = response.json()
     assert body["title"] is None
-    assert body["documents"] == [{"id": str(document.id), "original_filename": "paper.pdf"}]
+    assert body["documents"] == [{"id": str(document.id), "original_filename": "paper.pdf", "format": "pdf"}]
     chat = db_session.get(Chat, UUID(body["id"]))
     assert chat is not None
     assert db_session.query(ChatDocument).filter_by(chat_id=chat.id).count() == 1
@@ -188,7 +188,7 @@ def test_chat_detail_returns_ordered_messages_with_sources(authenticated_client,
     assert response.status_code == 200
     body = response.json()
     assert body["chat"]["id"] == str(chat.id)
-    assert body["chat"]["documents"] == [{"id": str(document.id), "original_filename": "paper.pdf"}]
+    assert body["chat"]["documents"] == [{"id": str(document.id), "original_filename": "paper.pdf", "format": "pdf"}]
     assert [message["role"] for message in body["messages"]] == ["user", "assistant"]
     source = body["messages"][1]["sources"][0]
     assert source["document_filename"] == "paper.pdf"
