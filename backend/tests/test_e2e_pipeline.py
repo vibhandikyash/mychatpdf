@@ -2,6 +2,7 @@ from io import BytesIO
 from uuid import UUID
 
 from app.models import Document, DocumentStatus, Message, MessageRole, MessageSource
+from app.services.extractors import DocumentTextExtractor
 from app.services.processing import ExtractedPage, process_document
 from app.services.vector import RetrievedSource
 
@@ -17,6 +18,11 @@ class RecordingStorage:
                 "content": content,
                 "content_type": content_type,
             }
+        )
+
+    def download_pdf(self, document):
+        return next(
+            upload["content"] for upload in self.uploads if upload["object_key"] == document.wasabi_object_key
         )
 
 
@@ -147,3 +153,51 @@ def test_e2e_upload_process_chat_with_citation(authenticated_client, db_session,
     assert db_session.query(Message).filter_by(role=MessageRole.USER).count() == 1
     assert db_session.query(Message).filter_by(role=MessageRole.ASSISTANT).count() == 1
     assert db_session.query(MessageSource).one().page_start == 2
+
+
+def test_e2e_txt_upload_processes_to_ready_and_chats(authenticated_client, db_session, monkeypatch):
+    storage = RecordingStorage()
+    vector_service = E2EVectorService()
+
+    monkeypatch.setattr("app.api.routes.get_storage_service", lambda _settings: storage)
+    monkeypatch.setattr("app.api.routes.enqueue_document_processing", lambda _settings, _document_id: None)
+    monkeypatch.setattr("app.api.routes.get_vector_service", lambda _settings: vector_service)
+
+    # 900 words -> two ~800-word sections, so section 2 exists for the citation.
+    filler = " ".join(f"filler{index}" for index in range(880))
+    text = f"{filler} Pipeline quality improved in regulated industries after end-to-end testing."
+
+    upload_response = authenticated_client.post(
+        "/api/documents",
+        files={"file": ("pipeline-notes.txt", BytesIO(text.encode("utf-8")), "text/plain")},
+    )
+
+    assert upload_response.status_code == 201
+    document_id = UUID(upload_response.json()["id"])
+    assert storage.uploads[0]["object_key"].endswith(f"/documents/{document_id}/original.txt")
+
+    # Real per-format extractor (no fake): exercises the txt extraction path.
+    process_document(
+        db_session,
+        document_id,
+        extractor=DocumentTextExtractor(storage),
+        vector_service=vector_service,
+    )
+
+    document = db_session.get(Document, document_id)
+    assert document.status == DocumentStatus.READY
+    assert document.format == "txt"
+    assert document.page_count == 2
+    assert document.chunk_count == 2
+
+    with authenticated_client.stream(
+        "POST",
+        f"/api/documents/{document_id}/chat/stream",
+        json={"content": "What improved?"},
+    ) as chat_response:
+        chat_stream = chat_response.read().decode("utf-8")
+
+    assert chat_response.status_code == 200
+    assert "Pipeline quality improved in regulated industries" in chat_stream
+    assert '"page_start": 2' in chat_stream
+    assert "event: message_done" in chat_stream

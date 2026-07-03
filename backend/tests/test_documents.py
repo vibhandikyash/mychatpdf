@@ -2,19 +2,69 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.models import Document, DocumentStatus, User
 
 
-def test_upload_rejects_non_pdf(authenticated_client):
+@pytest.mark.parametrize(
+    ("filename", "content_type", "expected_format"),
+    [
+        ("paper.pdf", "application/pdf", "pdf"),
+        ("notes.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+        ("deck.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"),
+        ("notes.txt", "text/plain", "txt"),
+        ("memo.rtf", "application/rtf", "rtf"),
+        ("memo.rtf", "text/rtf", "rtf"),
+        # Browsers often send a generic content type; the extension decides.
+        ("notes.docx", "application/octet-stream", "docx"),
+    ],
+)
+def test_upload_accepts_supported_formats(authenticated_client, db_session, filename, content_type, expected_format):
     response = authenticated_client.post(
         "/api/documents",
-        files={"file": ("notes.txt", BytesIO(b"hello"), "text/plain")},
+        files={"file": (filename, BytesIO(b"fake file body"), content_type)},
     )
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Only PDF uploads are supported"
+    assert response.status_code == 201
+    document = db_session.get(Document, UUID(response.json()["id"]))
+    assert document.format == expected_format
+    assert document.wasabi_object_key.endswith(f"/original.{expected_format}")
+
+
+@pytest.mark.parametrize(
+    ("filename", "content_type"),
+    [
+        ("virus.exe", "application/octet-stream"),
+        ("data.csv", "text/csv"),
+        ("notes", "text/plain"),
+        # Extension/content-type mismatch is rejected too.
+        ("notes.docx", "application/pdf"),
+    ],
+)
+def test_upload_rejects_unsupported_files_with_415(authenticated_client, filename, content_type):
+    response = authenticated_client.post(
+        "/api/documents",
+        files={"file": (filename, BytesIO(b"hello"), content_type)},
+    )
+
+    assert response.status_code == 415
+    assert response.json()["detail"] == "Unsupported file type. Upload a PDF, DOCX, PPTX, TXT, or RTF file."
+
+
+def test_document_format_is_returned_by_the_api(authenticated_client):
+    upload = authenticated_client.post(
+        "/api/documents",
+        files={"file": ("notes.txt", BytesIO(b"plain text"), "text/plain")},
+    )
+    document_id = upload.json()["id"]
+
+    detail = authenticated_client.get(f"/api/documents/{document_id}")
+    listing = authenticated_client.get("/api/documents")
+
+    assert detail.json()["format"] == "txt"
+    assert listing.json()["items"][0]["format"] == "txt"
 
 
 def test_upload_rejects_oversized_pdf(authenticated_client, app):
@@ -33,7 +83,7 @@ def test_upload_rejects_oversized_pdf(authenticated_client, app):
     )
 
     assert response.status_code == 413
-    assert response.json()["detail"] == "PDF exceeds the configured upload limit"
+    assert response.json()["detail"] == "File exceeds the configured upload limit"
 
 
 def test_upload_rejects_oversized_pdf_without_content_length(authenticated_client, app):
@@ -53,7 +103,7 @@ def test_upload_rejects_oversized_pdf_without_content_length(authenticated_clien
     )
 
     assert response.status_code == 413
-    assert response.json()["detail"] == "PDF exceeds the configured upload limit"
+    assert response.json()["detail"] == "File exceeds the configured upload limit"
 
 
 def test_upload_creates_document_and_processing_job(authenticated_client, db_session):

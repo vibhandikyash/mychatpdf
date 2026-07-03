@@ -39,10 +39,10 @@ export function UploadHome({ documents, onOpenDocument, onUploadFile }: UploadHo
         <section className="mx-auto w-full max-w-4xl text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.16em] text-sea">Workspace</p>
           <h1 className="mt-2 text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
-            Chat with any <span className="text-sea">PDF</span>
+            Chat with any <span className="text-sea">document</span>
           </h1>
           <p className="mx-auto mt-3 max-w-2xl text-base leading-7 text-slate-600">
-            Upload a text-based PDF, ask questions, and jump back to cited pages from the answer.
+            Upload a PDF, DOCX, PPTX, TXT, or RTF file, ask questions, and jump back to cited sources from the answer.
           </p>
         </section>
 
@@ -60,7 +60,8 @@ export function UploadHome({ documents, onOpenDocument, onUploadFile }: UploadHo
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sea">Supported flow</p>
               <h2 className="mt-1 text-2xl font-semibold tracking-tight text-ink">Upload once, chat with citations</h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                This workspace currently supports text-based PDFs, document preview, grounded chat, and page-linked citations.
+                This workspace supports PDF, DOCX, PPTX, TXT, and RTF files with grounded chat and source-linked
+                citations. PDF preview is built in.
               </p>
               <div className="mt-5 grid gap-3">
                 {supportedFlow.map((item) => (
@@ -102,7 +103,7 @@ export function UploadHome({ documents, onOpenDocument, onUploadFile }: UploadHo
           <aside className="space-y-4">
             <DashboardInfoCard
               icon={<FileText size={20} aria-hidden="true" />}
-              title={documents.length ? `${documents.length} PDFs` : "Empty state"}
+              title={documents.length ? `${documents.length} documents` : "Empty state"}
               text={documents.length ? "Your latest files are ready from this dashboard." : "Upload directly from this screen to begin."}
               tone="teal"
             />
@@ -144,8 +145,8 @@ function RecentDocuments({
   if (documents.length === 0) {
     return (
       <div className="brand-soft-surface rounded-xl border border-dashed border-teal-200 p-6 text-center">
-        <h3 className="font-semibold text-ink">No PDFs yet</h3>
-        <p className="mt-1 text-sm text-slate-600">Upload a PDF above to start asking grounded questions.</p>
+        <h3 className="font-semibold text-ink">No documents yet</h3>
+        <p className="mt-1 text-sm text-slate-600">Upload a document above to start asking grounded questions.</p>
       </div>
     );
   }

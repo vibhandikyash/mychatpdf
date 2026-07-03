@@ -64,6 +64,7 @@ def _document_summary(document: Document) -> dict[str, object]:
     return {
         "id": str(document.id),
         "original_filename": document.original_filename,
+        "format": document.format,
         "status": _enum_value(document.status),
         "file_size_bytes": document.file_size_bytes,
         "page_count": document.page_count,
@@ -115,21 +116,38 @@ def list_documents(
 
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 
+# extension -> (format, canonical content type). Browsers are inconsistent, so a
+# generic content type falls back to the extension.
+UPLOAD_FORMATS: dict[str, tuple[str, str]] = {
+    ".pdf": ("pdf", "application/pdf"),
+    ".docx": ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    ".pptx": ("pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+    ".txt": ("txt", "text/plain"),
+    ".rtf": ("rtf", "application/rtf"),
+}
+EXTRA_UPLOAD_CONTENT_TYPES: dict[str, set[str]] = {"rtf": {"text/rtf"}}
+GENERIC_UPLOAD_CONTENT_TYPES = {"", "application/octet-stream"}
+UNSUPPORTED_UPLOAD_DETAIL = "Unsupported file type. Upload a PDF, DOCX, PPTX, TXT, or RTF file."
 
-def _validate_pdf_upload(file: UploadFile, content: bytes, settings: Settings) -> None:
-    filename = file.filename or ""
-    if not filename.lower().endswith(".pdf") or file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF uploads are supported")
 
-    max_bytes = settings.max_upload_mb * 1024 * 1024
-    if len(content) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="PDF exceeds the configured upload limit",
-        )
+def _resolve_upload_format(file: UploadFile) -> tuple[str, str]:
+    """Return (format, content_type) or raise 415."""
+    filename = (file.filename or "").lower()
+    extension = filename[filename.rfind(".") :] if "." in filename else ""
+    entry = UPLOAD_FORMATS.get(extension)
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=UNSUPPORTED_UPLOAD_DETAIL)
+
+    document_format, canonical_type = entry
+    content_type = (file.content_type or "").lower()
+    if content_type in GENERIC_UPLOAD_CONTENT_TYPES:
+        return document_format, canonical_type
+    if content_type == canonical_type or content_type in EXTRA_UPLOAD_CONTENT_TYPES.get(document_format, set()):
+        return document_format, content_type
+    raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=UNSUPPORTED_UPLOAD_DETAIL)
 
 
-async def _read_pdf_upload(file: UploadFile, max_bytes: int) -> bytes:
+async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
     chunks = bytearray()
     while True:
         chunk = await file.read(UPLOAD_READ_CHUNK_BYTES)
@@ -139,7 +157,7 @@ async def _read_pdf_upload(file: UploadFile, max_bytes: int) -> bytes:
         if len(chunks) > max_bytes:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="PDF exceeds the configured upload limit",
+                detail="File exceeds the configured upload limit",
             )
     return bytes(chunks)
 
@@ -157,16 +175,17 @@ async def upload_document(
     if parsed_content_length is not None and parsed_content_length > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="PDF exceeds the configured upload limit",
+            detail="File exceeds the configured upload limit",
         )
 
-    content = await _read_pdf_upload(file, max_bytes)
-    _validate_pdf_upload(file, content, settings)
+    document_format, content_type = _resolve_upload_format(file)
+    content = await _read_upload(file, max_bytes)
 
     document = Document(
         user_id=current_user.id,
-        original_filename=file.filename or "upload.pdf",
-        content_type=file.content_type or "application/pdf",
+        original_filename=file.filename or f"upload.{document_format}",
+        content_type=content_type,
+        format=document_format,
         file_size_bytes=len(content),
         status=DocumentStatus.UPLOADED,
         wasabi_bucket=settings.wasabi_bucket,
@@ -175,7 +194,7 @@ async def upload_document(
     )
     db.add(document)
     db.flush()
-    document.wasabi_object_key = build_document_object_key(current_user.id, document.id)
+    document.wasabi_object_key = build_document_object_key(current_user.id, document.id, document_format)
 
     storage_service = get_storage_service(settings)
     try:

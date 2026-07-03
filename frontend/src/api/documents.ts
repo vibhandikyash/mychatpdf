@@ -1,9 +1,10 @@
 import { ApiClient } from "./client";
-import { ChatMessage, Citation, DocumentStatus, DocumentSummary } from "../types";
+import { ChatMessage, Citation, DocumentFormat, DocumentStatus, DocumentSummary } from "../types";
 
 interface BackendDocumentSummary {
   id: string;
   original_filename: string;
+  format?: DocumentFormat | null;
   status: DocumentStatus;
   file_size_bytes: number;
   page_count?: number | null;
@@ -70,6 +71,7 @@ export function mapDocumentSummary(document: BackendDocumentSummary): DocumentSu
   return {
     id: document.id,
     originalFilename: document.original_filename,
+    format: document.format ?? "pdf",
     status: document.status,
     fileSizeBytes: document.file_size_bytes,
     pageCount: document.page_count ?? undefined,

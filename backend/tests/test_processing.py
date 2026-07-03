@@ -1,6 +1,12 @@
 from app.models import Document, DocumentStatus, ProcessingJob, ProcessingJobStatus, User
 from app.models import DocumentChunk
-from app.services.processing import ExtractedPage, MaxPagesExceededError, NoExtractableTextError, process_document
+from app.services.processing import (
+    ExtractedPage,
+    MaxPagesExceededError,
+    NoExtractableTextError,
+    UnsupportedFileError,
+    process_document,
+)
 from app.services.processing import chunk_pages
 from app.services.vector import DOCUMENT_INTELLIGENCE_VERSION
 
@@ -8,6 +14,11 @@ from app.services.vector import DOCUMENT_INTELLIGENCE_VERSION
 class NoTextExtractor:
     def extract_pages(self, _document):
         return []
+
+
+class CorruptFileExtractor:
+    def extract_pages(self, _document):
+        raise UnsupportedFileError("This DOCX file could not be opened. It may be corrupt.")
 
 
 class UnusedVectorService:
@@ -308,3 +319,45 @@ def test_processing_fails_before_embedding_when_pdf_exceeds_page_limit(db_sessio
     assert document.failure_code == "max_pdf_pages_exceeded"
     assert job.status == ProcessingJobStatus.FAILED
     assert job.error_code == "max_pdf_pages_exceeded"
+
+
+def test_unsupported_file_processing_marks_document_and_job_failed(db_session):
+    user = User(clerk_user_id="user_unsupported", email="unsupported@example.com")
+    document = Document(
+        user=user,
+        original_filename="corrupt.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        format="docx",
+        file_size_bytes=200,
+        status=DocumentStatus.UPLOADED,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.docx",
+        pinecone_namespace="test",
+    )
+    job = ProcessingJob(
+        user=user,
+        document=document,
+        status=ProcessingJobStatus.QUEUED,
+        current_step="queued",
+    )
+    db_session.add_all([user, document, job])
+    db_session.commit()
+
+    try:
+        process_document(
+            db_session,
+            document.id,
+            extractor=CorruptFileExtractor(),
+            vector_service=UnusedVectorService(),
+        )
+    except UnsupportedFileError:
+        pass
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+
+    assert document.status == DocumentStatus.FAILED
+    assert document.failure_code == "unsupported_file"
+    assert "could not be opened" in document.failure_message
+    assert job.status == ProcessingJobStatus.FAILED
+    assert job.error_code == "unsupported_file"

@@ -31,6 +31,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     original_filename: Mapped[str] = mapped_column(String(512))
     content_type: Mapped[str] = mapped_column(String(255))
+    format: Mapped[str] = mapped_column(String(16), default="pdf", server_default="pdf")
     file_size_bytes: Mapped[int] = mapped_column(Integer)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[DocumentStatus] = mapped_column(String(32), index=True)

@@ -3,13 +3,17 @@ import { FileUp, Loader2, UploadCloud } from "lucide-react";
 
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
+export const SUPPORTED_UPLOAD_EXTENSIONS = [".pdf", ".docx", ".pptx", ".txt", ".rtf"] as const;
+export const UPLOAD_ACCEPT = SUPPORTED_UPLOAD_EXTENSIONS.join(",");
+
 interface UploadDropzoneProps {
   onAccepted: (file: File) => void;
   initialProgress?: number;
 }
 
-function isPdf(file: File) {
-  return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+function isSupportedFile(file: File) {
+  const name = file.name.toLowerCase();
+  return SUPPORTED_UPLOAD_EXTENSIONS.some((extension) => name.endsWith(extension));
 }
 
 export function UploadDropzone({ onAccepted, initialProgress = 100 }: UploadDropzoneProps) {
@@ -20,15 +24,15 @@ export function UploadDropzone({ onAccepted, initialProgress = 100 }: UploadDrop
   const [isDragging, setIsDragging] = useState(false);
 
   function acceptFile(file: File) {
-    if (!isPdf(file)) {
-      setError("Only PDF files are supported in Phase 1.");
+    if (!isSupportedFile(file)) {
+      setError("Unsupported file type. Upload a PDF, DOCX, PPTX, TXT, or RTF file.");
       setFileName(null);
       setProgress(0);
       return;
     }
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      setError("File too large. Upload a PDF under 20 MB.");
+      setError("File too large. Upload a file under 20 MB.");
       setFileName(null);
       setProgress(0);
       return;
@@ -71,19 +75,20 @@ export function UploadDropzone({ onAccepted, initialProgress = 100 }: UploadDrop
       <div className="brand-gradient mx-auto grid h-16 w-16 place-items-center rounded-xl text-white shadow-sm">
         <UploadCloud size={26} aria-hidden="true" />
       </div>
-      <h2 className="mt-4 text-2xl font-semibold text-ink">Drop your PDF here</h2>
+      <h2 className="mt-4 text-2xl font-semibold text-ink">Drop your document here</h2>
       <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-600">
-        Drag a text-based PDF here or choose one from your computer. Uploads are validated before processing starts.
+        Drag a PDF, DOCX, PPTX, TXT, or RTF file here or choose one from your computer. Uploads are validated before
+        processing starts.
       </p>
 
       <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-        <input ref={inputRef} id="pdf-upload" type="file" accept="application/pdf,.pdf" onChange={onInputChange} className="sr-only" />
+        <input ref={inputRef} id="pdf-upload" type="file" accept={UPLOAD_ACCEPT} onChange={onInputChange} className="sr-only" />
         <label
           htmlFor="pdf-upload"
           className="brand-gradient inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:shadow-[0_14px_28px_rgba(32,104,248,0.22)]"
         >
           <FileUp size={18} aria-hidden="true" />
-          Choose PDF
+          Choose file
         </label>
         {fileName ? <span className="text-sm font-medium text-slate-700">{fileName}</span> : null}
       </div>
@@ -99,7 +104,7 @@ export function UploadDropzone({ onAccepted, initialProgress = 100 }: UploadDrop
           <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
             <span className="inline-flex items-center gap-1.5">
               <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-              Uploading PDF...
+              Uploading file...
             </span>
             <span>{progress}%</span>
           </div>

@@ -5,8 +5,8 @@ from app.models import Document
 from app.models.mixins import utc_now
 
 
-def build_document_object_key(user_id: object, document_id: object) -> str:
-    return f"users/{user_id}/documents/{document_id}/original.pdf"
+def build_document_object_key(user_id: object, document_id: object, extension: str = "pdf") -> str:
+    return f"users/{user_id}/documents/{document_id}/original.{extension}"
 
 
 class StorageService:

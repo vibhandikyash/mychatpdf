@@ -53,6 +53,21 @@ describe("DocumentWorkspace", () => {
     expect(screen.getByRole("tab", { name: /chat/i })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("shows a preview placeholder instead of the PDF viewer for non-PDF formats", async () => {
+    render(<DocumentWorkspace document={{ ...mockWorkspaceDocument, format: "txt" }} messages={[]} />);
+
+    expect(
+      await screen.findByText(/preview is not available for this file type\. chat works on the full document text/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/page 1 of 24/i)).not.toBeInTheDocument();
+  });
+
+  it("labels citations as slides for pptx documents", async () => {
+    render(<DocumentWorkspace document={{ ...mockWorkspaceDocument, format: "pptx" }} messages={mockMessages} />);
+
+    expect(await screen.findByRole("button", { name: /open page 7 in pdf/i })).toHaveTextContent("slide 7");
+  });
+
   it("shows a generating state while a message is being sent", async () => {
     const user = userEvent.setup();
     const onSendMessage = vi.fn(() => new Promise<void>(() => undefined));

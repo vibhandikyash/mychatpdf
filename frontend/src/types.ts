@@ -8,9 +8,12 @@ export type DocumentStatus =
   | "failed"
   | "deleting";
 
+export type DocumentFormat = "pdf" | "docx" | "pptx" | "txt" | "rtf";
+
 export interface DocumentSummary {
   id: string;
   originalFilename: string;
+  format?: DocumentFormat;
   status: DocumentStatus;
   fileSizeBytes: number;
   pageCount?: number;

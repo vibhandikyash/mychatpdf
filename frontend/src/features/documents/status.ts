@@ -1,9 +1,21 @@
-import { DocumentStatus } from "../../types";
+import { DocumentFormat, DocumentStatus } from "../../types";
+
+export function citationPageLabel(format: DocumentFormat | undefined, pageStart: number, pageEnd: number = pageStart) {
+  if (format === "pptx") {
+    return pageStart === pageEnd ? `slide ${pageStart}` : `slides ${pageStart}-${pageEnd}`;
+  }
+
+  if (format === "docx" || format === "txt" || format === "rtf") {
+    return pageStart === pageEnd ? `section ${pageStart}` : `sections ${pageStart}-${pageEnd}`;
+  }
+
+  return pageStart === pageEnd ? `p. ${pageStart}` : `pp. ${pageStart}-${pageEnd}`;
+}
 
 export function documentStatusLabel(status: DocumentStatus) {
   switch (status) {
     case "uploaded":
-      return "Uploading PDF...";
+      return "Uploading file...";
     case "extracting":
       return "Reading document...";
     case "chunking":

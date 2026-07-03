@@ -41,7 +41,7 @@ test("user uploads a PDF, asks a question, opens a citation, and refreshes chat 
   });
 
   await expect(page).toHaveURL(/\/app\/documents\/doc-e2e-ready$/);
-  await expect(page.getByText("Uploading PDF...")).toBeVisible();
+  await expect(page.getByText("Uploading file...")).toBeVisible();
   await expect(page.getByText("Ready to chat")).toBeVisible({ timeout: 6_000 });
 
   await page.getByRole("textbox", { name: "Ask this document" }).fill("What improved?");
@@ -60,17 +60,17 @@ test("user uploads a PDF, asks a question, opens a citation, and refreshes chat 
   await expect(page.getByRole("button", { name: "Open page 2 in PDF" })).toBeVisible();
 });
 
-test("rejects a non-PDF upload before calling the upload API", async ({ page }) => {
+test("rejects an unsupported upload before calling the upload API", async ({ page }) => {
   const state = await mockApi(page);
 
   await page.goto("/app");
   await page.locator("#pdf-upload").setInputFiles({
-    name: "meeting-notes.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("plain text is not supported")
+    name: "meeting-notes.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("csv,files,are,not,supported")
   });
 
-  await expect(page.getByRole("alert")).toContainText("Only PDF files are supported in Phase 1.");
+  await expect(page.getByRole("alert")).toContainText("Unsupported file type. Upload a PDF, DOCX, PPTX, TXT, or RTF file.");
   expect(state.uploadRequests).toBe(0);
 });
 
@@ -84,7 +84,7 @@ test("rejects an oversized PDF before calling the upload API", async ({ page }) 
     buffer: Buffer.alloc(20 * 1024 * 1024 + 1, 0)
   });
 
-  await expect(page.getByRole("alert")).toContainText("File too large. Upload a PDF under 20 MB.");
+  await expect(page.getByRole("alert")).toContainText("File too large. Upload a file under 20 MB.");
   expect(state.uploadRequests).toBe(0);
 });
 

@@ -15,8 +15,8 @@ import {
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { Columns2, FileText, GripVertical, Loader2, MessageCircle, SendHorizontal, Square } from "lucide-react";
-import { ChatMessage, Citation, WorkspaceDocument } from "../../types";
-import { documentStatusLabel, isProcessingStatus } from "./status";
+import { ChatMessage, Citation, DocumentFormat, WorkspaceDocument } from "../../types";
+import { citationPageLabel, documentStatusLabel, isProcessingStatus } from "./status";
 import type { PdfSelectionAction } from "./PdfSelectionToolbar";
 
 const PdfViewer = lazy(() => import("./PdfViewer").then((module) => ({ default: module.PdfViewer })));
@@ -56,6 +56,8 @@ export function DocumentWorkspace({
   onCancelMessage
 }: DocumentWorkspaceProps) {
   const documentPageCount = document.pageCount ?? 1;
+  const documentFormat: DocumentFormat = document.format ?? "pdf";
+  const isPdfDocument = documentFormat === "pdf";
   const [activePage, setActivePage] = useState(1);
   const [zoom, setZoom] = useState(100);
   const [viewerPageCount, setViewerPageCount] = useState(documentPageCount);
@@ -345,22 +347,26 @@ export function DocumentWorkspace({
             showPdfOnDesktop ? "lg:block" : "lg:hidden"
           } h-full min-h-0 bg-slate-100 ${showChatOnDesktop && !isSplitView ? "lg:border-r lg:border-slate-200" : ""}`}
         >
-          <Suspense fallback={<PdfViewerFallback />}>
-            <PdfViewer
-              document={document}
-              activePage={activePage}
-              totalPages={totalPages}
-              zoom={zoom}
-              scrollRequestId={pdfScrollRequestId}
-              activeSource={activeSource}
-              onPageChange={jumpToPage}
-              onTotalPagesChange={updateTotalPages}
-              onVisiblePageChange={updateVisiblePage}
-              onZoomChange={setZoom}
-              onSelectionAction={askAboutSelection}
-              isSelectionActionDisabled={!isReady || isGenerating}
-            />
-          </Suspense>
+          {isPdfDocument ? (
+            <Suspense fallback={<PdfViewerFallback />}>
+              <PdfViewer
+                document={document}
+                activePage={activePage}
+                totalPages={totalPages}
+                zoom={zoom}
+                scrollRequestId={pdfScrollRequestId}
+                activeSource={activeSource}
+                onPageChange={jumpToPage}
+                onTotalPagesChange={updateTotalPages}
+                onVisiblePageChange={updateVisiblePage}
+                onZoomChange={setZoom}
+                onSelectionAction={askAboutSelection}
+                isSelectionActionDisabled={!isReady || isGenerating}
+              />
+            </Suspense>
+          ) : (
+            <NonPdfPreviewPlaceholder filename={document.originalFilename} format={documentFormat} />
+          )}
         </div>
 
         {isSplitView ? (
@@ -425,7 +431,7 @@ export function DocumentWorkspace({
                   />
                 ) : (
                   <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
-                    The PDF is being prepared. Chat will unlock as soon as text extraction and indexing finish.
+                    The document is being prepared. Chat will unlock as soon as text extraction and indexing finish.
                   </div>
                 )
               ) : null}
@@ -446,6 +452,7 @@ export function DocumentWorkspace({
                     <FormattedChatMessage
                       activeSourceId={activeSourceId}
                       content={message.content}
+                      format={documentFormat}
                       isStreaming={message.id === streamingAssistant?.id && Boolean(message.content)}
                       role={message.role}
                       sources={message.sources ?? []}
@@ -567,7 +574,7 @@ function ChatWelcomeCard({
           <MessageCircle size={18} aria-hidden="true" />
         </span>
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-ink">Your PDF is ready.</p>
+          <p className="text-sm font-semibold text-ink">Your document is ready.</p>
           <p className="mt-1 text-sm leading-6 text-slate-600">
             Ask anything about <span className="font-medium text-ink">{documentName}</span>. I will answer from the document and link
             cited pages inline when the answer references them.
@@ -607,6 +614,7 @@ interface PageReference {
 function FormattedChatMessage({
   activeSourceId,
   content,
+  format,
   isStreaming,
   role,
   sources,
@@ -614,6 +622,7 @@ function FormattedChatMessage({
 }: {
   activeSourceId: string | null;
   content: string;
+  format: DocumentFormat;
   isStreaming: boolean;
   role: ChatMessage["role"];
   sources: Citation[];
@@ -628,7 +637,7 @@ function FormattedChatMessage({
         if (block.type === "heading") {
           return (
             <h2 key={`heading-${blockIndex}`} className="text-sm font-semibold">
-              {renderInlineText(block.text, `heading-${blockIndex}`, role, activeSourceId, sources, onOpenPage)}
+              {renderInlineText(block.text, `heading-${blockIndex}`, format, role, activeSourceId, sources, onOpenPage)}
             </h2>
           );
         }
@@ -638,7 +647,7 @@ function FormattedChatMessage({
             <ul key={`bullet-${blockIndex}`} className="space-y-1 pl-5 marker:text-current">
               {block.items.map((item, itemIndex) => (
                 <li key={`bullet-${blockIndex}-${itemIndex}`} className="list-disc">
-                  {renderInlineText(item, `bullet-${blockIndex}-${itemIndex}`, role, activeSourceId, sources, onOpenPage)}
+                  {renderInlineText(item, `bullet-${blockIndex}-${itemIndex}`, format, role, activeSourceId, sources, onOpenPage)}
                 </li>
               ))}
             </ul>
@@ -650,7 +659,7 @@ function FormattedChatMessage({
             <ol key={`numbered-${blockIndex}`} className="space-y-1 pl-5 marker:text-current">
               {block.items.map((item, itemIndex) => (
                 <li key={`numbered-${blockIndex}-${itemIndex}`} className="list-decimal">
-                  {renderInlineText(item, `numbered-${blockIndex}-${itemIndex}`, role, activeSourceId, sources, onOpenPage)}
+                  {renderInlineText(item, `numbered-${blockIndex}-${itemIndex}`, format, role, activeSourceId, sources, onOpenPage)}
                 </li>
               ))}
             </ol>
@@ -659,7 +668,7 @@ function FormattedChatMessage({
 
         return (
           <p key={`paragraph-${blockIndex}`}>
-            {renderInlineText(block.text, `paragraph-${blockIndex}`, role, activeSourceId, sources, onOpenPage)}
+            {renderInlineText(block.text, `paragraph-${blockIndex}`, format, role, activeSourceId, sources, onOpenPage)}
           </p>
         );
       })}
@@ -718,6 +727,25 @@ const processingSteps = [
   { status: "embedding", label: "Embedding" },
   { status: "indexing", label: "Indexing" }
 ] as const;
+
+function NonPdfPreviewPlaceholder({ filename, format }: { filename: string; format: DocumentFormat }) {
+  return (
+    <div className="grid h-full min-h-0 place-items-center bg-slate-100 p-6">
+      <div className="max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+        <span className="mx-auto grid h-12 w-12 place-items-center rounded-lg bg-teal-50 text-sea">
+          <FileText size={22} aria-hidden="true" />
+        </span>
+        <p className="mt-3 truncate text-sm font-semibold text-ink" title={filename}>
+          {filename}
+        </p>
+        <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{format} file</p>
+        <p className="mt-3 text-sm leading-6 text-slate-600">
+          Preview is not available for this file type. Chat works on the full document text.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function PdfViewerFallback() {
   return (
@@ -850,6 +878,7 @@ function parseChatMessageBlocks(content: string): ChatMessageBlock[] {
 function renderInlineText(
   text: string,
   keyPrefix: string,
+  format: DocumentFormat,
   role: ChatMessage["role"],
   activeSourceId: string | null,
   sources: Citation[],
@@ -866,7 +895,7 @@ function renderInlineText(
       nodes.push(...renderStrongText(text.slice(cursor, match.index), `${keyPrefix}-text-${matchIndex}`));
     }
 
-    const references = parsePageReferences(match[2]);
+    const references = parsePageReferences(match[2], format);
     if (references.length) {
       nodes.push(
         <InlinePageReferences
@@ -1044,7 +1073,7 @@ function InlinePageReferences({
   );
 }
 
-function parsePageReferences(value: string): PageReference[] {
+function parsePageReferences(value: string, format: DocumentFormat): PageReference[] {
   return Array.from(value.matchAll(/\d+(?:\s*[-–—]\s*\d+)?/g))
     .map((match) => {
       const [startText, endText] = match[0].split(/[-–—]/).map((part) => part.trim());
@@ -1059,7 +1088,7 @@ function parsePageReferences(value: string): PageReference[] {
       return {
         pageStart,
         pageEnd,
-        label: pageStart === pageEnd ? `p. ${pageStart}` : `pp. ${pageStart}-${pageEnd}`
+        label: citationPageLabel(format, pageStart, pageEnd)
       };
     })
     .filter((reference): reference is PageReference => reference !== null);

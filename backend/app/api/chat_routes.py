@@ -52,7 +52,11 @@ def _chat_summary(chat: Chat) -> dict[str, object]:
         "title": chat.title,
         "model": chat.model,
         "documents": [
-            {"id": str(document.id), "original_filename": document.original_filename}
+            {
+                "id": str(document.id),
+                "original_filename": document.original_filename,
+                "format": document.format,
+            }
             for document in chat.documents
         ],
         "created_at": chat.created_at.isoformat(),
