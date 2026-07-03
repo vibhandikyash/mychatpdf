@@ -16,6 +16,8 @@ class RetrievedSource:
     excerpt: str
     score: float | None
     context: str | None = None
+    document_id: str | None = None
+    document_filename: str | None = None
 
 
 ANSWER_SYSTEM_PROMPT = (
@@ -46,6 +48,10 @@ ANSWER_SYSTEM_PROMPT = (
     "Do not add a separate Sources or References section; citations must stay inline. "
     "Preserve important technical terms and numbers exactly when they appear in context. "
     "If context blocks conflict, explain the conflict and cite both pages."
+)
+MULTI_DOCUMENT_ATTRIBUTION_PROMPT = (
+    "When the context contains multiple documents, attribute each claim to its document by name. "
+    "For comparisons, state per-document findings before the comparison."
 )
 SUMMARY_MAX_COMPLETION_TOKENS = 320
 DOCUMENT_OVERVIEW_SOURCE_LIMIT = 12
@@ -220,6 +226,31 @@ def _has_explicit_action_markers(sources: list[RetrievedSource]) -> bool:
     return any(marker in text for marker in EXPLICIT_ACTION_MARKERS)
 
 
+def _fair_scope_selection(sources: list[RetrievedSource], limit: int) -> list[RetrievedSource]:
+    # Guarantee at least one source per matched document before filling the
+    # remaining slots by score, so one verbose document cannot drown out the rest.
+    ranked = sorted(sources, key=lambda source: source.score or 0.0, reverse=True)
+    selected: list[RetrievedSource] = []
+    selected_chunk_ids: set[str] = set()
+    covered_documents: set[str | None] = set()
+    for source in ranked:
+        if len(selected) == limit:
+            break
+        if source.document_id in covered_documents:
+            continue
+        covered_documents.add(source.document_id)
+        selected.append(source)
+        selected_chunk_ids.add(source.chunk_id)
+    for source in ranked:
+        if len(selected) == limit:
+            break
+        if source.chunk_id not in selected_chunk_ids:
+            selected.append(source)
+            selected_chunk_ids.add(source.chunk_id)
+    selected.sort(key=lambda source: source.score or 0.0, reverse=True)
+    return selected
+
+
 def _parse_json_object(text: str) -> dict[str, object]:
     try:
         payload = json.loads(text)
@@ -311,6 +342,10 @@ class VectorService:
         index.upsert(vectors=records, namespace=self.settings.pinecone_namespace)
 
     def query_document(self, user: User, document: Document, question: str) -> list[RetrievedSource]:
+        return self.query_scope(user, [document], question)
+
+    def query_scope(self, user: User, documents: list[Document], question: str) -> list[RetrievedSource]:
+        filename_by_document_id = {str(document.id): document.original_filename for document in documents}
         if self.settings.openai_api_key and self.settings.pinecone_api_key:
             from pinecone import Pinecone
 
@@ -319,32 +354,41 @@ class VectorService:
             response = index.query(
                 vector=question_vector,
                 namespace=self.settings.pinecone_namespace,
-                top_k=8,
+                top_k=self.settings.retrieval_top_k,
                 include_metadata=True,
-                filter={"user_id": str(user.id), "document_id": str(document.id)},
+                filter={"user_id": str(user.id), "document_id": {"$in": list(filename_by_document_id)}},
             )
-            return [
+            sources = [
                 RetrievedSource(
                     chunk_id=str(match.metadata.get("chunk_id")),
                     page_start=int(match.metadata.get("page_start", 1)),
                     page_end=int(match.metadata.get("page_end", match.metadata.get("page_start", 1))),
                     excerpt=str(match.metadata.get("text_excerpt", "")),
                     score=float(match.score) if match.score is not None else None,
+                    document_id=str(match.metadata.get("document_id")),
+                    document_filename=filename_by_document_id.get(str(match.metadata.get("document_id"))),
                 )
                 for match in response.matches
                 if match.metadata
             ]
+        else:
+            sources = [
+                RetrievedSource(
+                    chunk_id=str(chunk.id),
+                    page_start=chunk.page_start,
+                    page_end=chunk.page_end,
+                    excerpt=chunk.text_excerpt,
+                    score=None,
+                    document_id=str(document.id),
+                    document_filename=document.original_filename,
+                )
+                for document in documents
+                for chunk in document.chunks[:3]
+            ]
 
-        return [
-            RetrievedSource(
-                chunk_id=str(chunk.id),
-                page_start=chunk.page_start,
-                page_end=chunk.page_end,
-                excerpt=chunk.text_excerpt,
-                score=None,
-            )
-            for chunk in document.chunks[:3]
-        ]
+        if len(documents) > 1:
+            return _fair_scope_selection(sources, self.settings.max_context_sources)
+        return sources
 
     def delete_document_vectors(self, user: User, document: Document) -> None:
         if not self.settings.pinecone_api_key:
@@ -393,7 +437,9 @@ class VectorService:
         payload["sources"] = [_source_payload(source) for source in sources]
         return payload
 
-    def stream_answer_tokens(self, question: str, sources: list[RetrievedSource]) -> Iterator[str]:
+    def stream_answer_tokens(
+        self, question: str, sources: list[RetrievedSource], model: str | None = None
+    ) -> Iterator[str]:
         if not self.settings.openai_api_key:
             if sources:
                 yield (
@@ -406,15 +452,22 @@ class VectorService:
 
         from openai import OpenAI
 
-        context = "\n\n".join(format_source_context(index, source) for index, source in enumerate(sources, start=1))
+        multi_document = len({source.document_id for source in sources if source.document_id}) > 1
+        context = "\n\n".join(
+            format_source_context(index, source, multi_document=multi_document)
+            for index, source in enumerate(sources, start=1)
+        )
+        system_prompt = ANSWER_SYSTEM_PROMPT
+        if multi_document:
+            system_prompt = f"{ANSWER_SYSTEM_PROMPT} {MULTI_DOCUMENT_ATTRIBUTION_PROMPT}"
         client = OpenAI(api_key=self.settings.openai_api_key)
         request: dict[str, object] = {
-            "model": self.settings.openai_chat_model,
+            "model": model or self.settings.openai_chat_model,
             "stream": True,
             "messages": [
                 {
                     "role": "system",
-                    "content": ANSWER_SYSTEM_PROMPT,
+                    "content": system_prompt,
                 },
                 {
                     "role": "user",
@@ -477,5 +530,12 @@ def format_page_citation(source: RetrievedSource) -> str:
     return f"pp. {source.page_start}-{source.page_end}"
 
 
-def format_source_context(index: int, source: RetrievedSource) -> str:
+def format_source_context(index: int, source: RetrievedSource, *, multi_document: bool = False) -> str:
+    if multi_document:
+        pages = (
+            f"p.{source.page_start}"
+            if source.page_start == source.page_end
+            else f"p.{source.page_start}-{source.page_end}"
+        )
+        return f'[S{index} · "{source.document_filename}" {pages}]\nText:\n{source.context or source.excerpt}'
     return f"[Source {index} | {format_page_citation(source)}]\nText:\n{source.context or source.excerpt}"

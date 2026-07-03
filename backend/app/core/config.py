@@ -38,15 +38,22 @@ class Settings(BaseSettings):
     openai_retry_initial_seconds: float = Field(default=0.5, ge=0)
     openai_chat_model: str = "gpt-4.1-mini"
     openai_chat_temperature: float | None = Field(default=None, ge=0, le=2)
+    openai_allowed_chat_models: str = "gpt-4.1-mini,gpt-4.1,o4-mini"
 
     pinecone_api_key: str | None = None
     pinecone_index_name: str = "mychatpdf"
     pinecone_namespace: str = "local"
 
+    retrieval_top_k: int = Field(default=8, ge=1)
+    max_context_sources: int = Field(default=8, ge=1)
+
     max_upload_mb: int = Field(default=20, ge=1)
     max_pdf_pages: int = Field(default=300, ge=1)
     redis_url: str = "redis://redis:6379/0"
     log_level: str = "INFO"
+
+    def allowed_chat_models(self) -> list[str]:
+        return [model.strip() for model in self.openai_allowed_chat_models.split(",") if model.strip()]
 
     def cors_origins(self) -> list[str]:
         origins: list[str] = []

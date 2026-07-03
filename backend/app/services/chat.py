@@ -50,6 +50,8 @@ FOLLOW_UP_TERMS = {
     "above",
     "same",
 }
+# ponytail: merge limit stays a constant here; VectorService reads the
+# configurable settings.max_context_sources for scope-fair retrieval.
 MAX_CONTEXT_SOURCES = 8
 EXACT_REFERENCE_SOURCE_LIMIT = 3
 KEYWORD_SOURCE_LIMIT = 3
@@ -120,13 +122,20 @@ DOCUMENT_INSIGHT_SUMMARY_PHRASES = (
 AUTO_TITLE_MAX_CHARS = 80
 
 
-def create_chat(db: Session, user: User, documents: list[Document], title: str | None = None) -> Chat:
+def create_chat(
+    db: Session,
+    user: User,
+    documents: list[Document],
+    title: str | None = None,
+    model: str | None = None,
+) -> Chat:
     chat = Chat(
         user_id=user.id,
         # ponytail: chats.document_id mirrors single-doc scope so the Phase 1
         # per-document routes stay a column match; M2 reads scope only.
         document_id=documents[0].id if len(documents) == 1 else None,
         title=title,
+        model=model,
     )
     db.add(chat)
     db.flush()
@@ -243,6 +252,8 @@ def _exact_reference_sources(db: Session, document: Document, question: str) -> 
                 excerpt=chunk.text_excerpt,
                 score=None,
                 context=chunk.text,
+                document_id=str(document.id),
+                document_filename=document.original_filename,
             )
         )
         if len(sources) == EXACT_REFERENCE_SOURCE_LIMIT:
@@ -288,6 +299,8 @@ def _keyword_sources(db: Session, document: Document, question: str) -> list[Ret
                 excerpt=chunk.text_excerpt,
                 score=None,
                 context=chunk.text,
+                document_id=str(document.id),
+                document_filename=document.original_filename,
             )
         )
     return sources
@@ -402,7 +415,9 @@ def _cached_insight_sources(document: Document, answer: str) -> list[RetrievedSo
     return cited_sources[:DOCUMENT_OVERVIEW_SOURCE_LIMIT]
 
 
-def _hydrate_source_context(db: Session, document: Document, sources: list[RetrievedSource]) -> list[RetrievedSource]:
+def _hydrate_source_context(
+    db: Session, documents: list[Document], sources: list[RetrievedSource]
+) -> list[RetrievedSource]:
     chunk_ids = []
     for source in sources:
         try:
@@ -414,7 +429,7 @@ def _hydrate_source_context(db: Session, document: Document, sources: list[Retri
 
     chunks = db.scalars(
         select(DocumentChunk).where(
-            DocumentChunk.document_id == document.id,
+            DocumentChunk.document_id.in_([document.id for document in documents]),
             DocumentChunk.id.in_(chunk_ids),
         )
     )
@@ -442,20 +457,20 @@ def _merge_sources(*source_groups: list[RetrievedSource], limit: int = MAX_CONTE
 def stream_chat_response(
     db: Session,
     user: User,
-    document: Document,
+    documents: Document | list[Document],
     content: str,
     vector_service: VectorService,
     chat: Chat | None = None,
 ) -> Iterator[str]:
-    if document.status != DocumentStatus.READY:
+    scope = documents if isinstance(documents, list) else [documents]
+    if any(document.status != DocumentStatus.READY for document in scope):
         yield format_sse("error", {"message": "Document is not ready for chat"})
         return
 
     if chat is None:
-        chat = get_or_create_chat(db, user, document)
-    # ponytail: M2 replaces single-document retrieval with query_scope over the
-    # full chat scope; until then a multi-doc message has no single document.
-    message_document_id = document.id if len(chat.documents) <= 1 else None
+        chat = get_or_create_chat(db, user, scope[0])
+    single_document = scope[0] if len(scope) == 1 else None
+    message_document_id = single_document.id if single_document else None
     prior_messages = list(
         db.scalars(
             select(Message).where(Message.chat_id == chat.id).order_by(Message.created_at)
@@ -491,19 +506,31 @@ def stream_chat_response(
     sources: list[RetrievedSource] = []
     yield format_sse("message_start", {"message_id": str(assistant_message.id)})
     try:
-        needs_overview = question_needs_document_overview(content)
+        # Insight/summary shortcuts stay single-doc only; multi-doc questions go
+        # through normal retrieval so answers stay attributable per document.
+        needs_overview = single_document is not None and question_needs_document_overview(content)
         if needs_overview and _question_can_use_document_insight(content):
-            _ensure_document_insight(db, document, vector_service)
-        cached_answer = _cached_insight_answer(document, content) if needs_overview else None
+            _ensure_document_insight(db, single_document, vector_service)
+        cached_answer = _cached_insight_answer(single_document, content) if needs_overview else None
         if cached_answer:
-            sources = _hydrate_source_context(db, document, _cached_insight_sources(document, cached_answer))
+            sources = _hydrate_source_context(
+                db, scope, _cached_insight_sources(single_document, cached_answer)
+            )
             answer_parts.append(cached_answer)
             yield format_sse("token", {"text": cached_answer})
         else:
-            exact_sources = _exact_reference_sources(db, document, contextual_question)
-            keyword_sources = _keyword_sources(db, document, contextual_question)
+            exact_sources = [
+                source
+                for document in scope
+                for source in _exact_reference_sources(db, document, contextual_question)
+            ]
+            keyword_sources = [
+                source
+                for document in scope
+                for source in _keyword_sources(db, document, contextual_question)
+            ]
             if needs_overview:
-                overview_sources = _overview_sources(db, document)
+                overview_sources = _overview_sources(db, single_document)
                 sources = _merge_sources(
                     overview_sources,
                     exact_sources,
@@ -511,16 +538,20 @@ def stream_chat_response(
                     limit=DOCUMENT_OVERVIEW_SOURCE_LIMIT,
                 )
             else:
-                vector_sources = vector_service.query_document(user, document, contextual_question)
+                if single_document is not None:
+                    vector_sources = vector_service.query_document(user, single_document, contextual_question)
+                else:
+                    vector_sources = vector_service.query_scope(user, scope, contextual_question)
                 sources = _merge_sources(exact_sources, keyword_sources, vector_sources)
-            sources = _hydrate_source_context(db, document, sources)
-            for token in vector_service.stream_answer_tokens(contextual_question, sources):
+            sources = _hydrate_source_context(db, scope, sources)
+            answer_kwargs = {"model": chat.model} if chat.model else {}
+            for token in vector_service.stream_answer_tokens(contextual_question, sources, **answer_kwargs):
                 answer_parts.append(token)
                 yield format_sse("token", {"text": token})
     except Exception as exc:
         logger.exception(
             "Chat response generation failed",
-            extra={"document_id": str(document.id), "message_id": str(assistant_message.id)},
+            extra={"chat_id": str(chat.id), "message_id": str(assistant_message.id)},
         )
         assistant_message.content = "".join(answer_parts)
         assistant_message.status = MessageStatus.FAILED
@@ -531,11 +562,13 @@ def stream_chat_response(
 
     assistant_message.content = "".join(answer_parts)
     assistant_message.status = MessageStatus.SUCCEEDED
+    default_document_id = str(scope[0].id)
+    filename_by_document_id = {str(document.id): document.original_filename for document in scope}
     for rank, source in enumerate(sources, start=1):
         db.add(
             MessageSource(
                 message_id=assistant_message.id,
-                document_id=document.id,
+                document_id=UUID(source.document_id or default_document_id),
                 chunk_id=UUID(source.chunk_id),
                 page_start=source.page_start,
                 page_end=source.page_end,
@@ -551,6 +584,9 @@ def stream_chat_response(
             "items": [
                 {
                     "chunk_id": source.chunk_id,
+                    "document_id": source.document_id or default_document_id,
+                    "document_filename": source.document_filename
+                    or filename_by_document_id.get(source.document_id or default_document_id),
                     "page_start": source.page_start,
                     "page_end": source.page_end,
                     "excerpt": source.excerpt,

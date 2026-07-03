@@ -50,6 +50,7 @@ def _chat_summary(chat: Chat) -> dict[str, object]:
     return {
         "id": str(chat.id),
         "title": chat.title,
+        "model": chat.model,
         "documents": [
             {"id": str(document.id), "original_filename": document.original_filename}
             for document in chat.documents
@@ -105,7 +106,11 @@ def create_chat_route(
     payload: dict[str, object],
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
+    model = payload.get("model")
+    if model is not None and (not isinstance(model, str) or model not in settings.allowed_chat_models()):
+        raise HTTPException(status_code=422, detail="Model is not allowed")
     raw_document_ids = payload.get("document_ids")
     if not isinstance(raw_document_ids, list) or not raw_document_ids:
         raise HTTPException(status_code=422, detail="document_ids must be a non-empty list")
@@ -123,7 +128,7 @@ def create_chat_route(
             raise HTTPException(status_code=422, detail="Document is not ready for chat")
         documents.append(document)
 
-    chat = create_chat(db, current_user, documents, title=_validated_title(payload))
+    chat = create_chat(db, current_user, documents, title=_validated_title(payload), model=model)
     return _chat_summary(chat)
 
 
@@ -184,12 +189,9 @@ def stream_chat_message(
     if not chat.documents:
         raise HTTPException(status_code=409, detail="Chat has no documents in scope")
 
-    # ponytail: M2 replaces with query_scope across the full chat scope; until
-    # then answers retrieve from the first scoped document only.
-    document = chat.documents[0]
     vector_service = get_vector_service(settings)
     return StreamingResponse(
-        stream_chat_response(db, current_user, document, content, vector_service, chat=chat),
+        stream_chat_response(db, current_user, list(chat.documents), content, vector_service, chat=chat),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
