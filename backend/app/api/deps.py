@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
-from app.models import Document, User
+from app.models import Chat, Document, User
 
 
 @lru_cache(maxsize=8)
@@ -126,3 +126,10 @@ def get_owned_document(db: Session, user: User, document_id: UUID) -> Document:
     if document is None or document.user_id != user.id or document.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return document
+
+
+def get_owned_chat(db: Session, user: User, chat_id: UUID) -> Chat:
+    chat = db.get(Chat, chat_id)
+    if chat is None or chat.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+    return chat

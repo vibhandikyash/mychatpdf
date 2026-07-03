@@ -1,5 +1,3 @@
-from base64 import urlsafe_b64decode, urlsafe_b64encode
-from datetime import datetime
 from io import BytesIO
 import logging
 from typing import Annotated
@@ -10,14 +8,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
+from app.api.chat_routes import message_payload
 from app.api.deps import get_current_user, get_owned_document
+from app.api.pagination import decode_cursor, encode_cursor
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.models import (
-    Chat,
     Document,
     DocumentStatus,
-    Message,
     ProcessingJob,
     ProcessingJobStatus,
     User,
@@ -81,21 +79,6 @@ DOCUMENT_LIST_DEFAULT_LIMIT = 50
 DOCUMENT_LIST_MAX_LIMIT = 100
 
 
-def _encode_document_cursor(document: Document) -> str:
-    payload = f"{document.created_at.isoformat()}|{document.id}"
-    return urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
-
-
-def _decode_document_cursor(cursor: str) -> tuple[datetime, UUID]:
-    try:
-        padded_cursor = cursor + ("=" * (-len(cursor) % 4))
-        raw_cursor = urlsafe_b64decode(padded_cursor.encode("ascii")).decode("utf-8")
-        created_at, document_id = raw_cursor.split("|", 1)
-        return datetime.fromisoformat(created_at), UUID(document_id)
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise HTTPException(status_code=422, detail="Invalid document cursor") from exc
-
-
 @router.get("/api/documents")
 def list_documents(
     status_filter: Annotated[DocumentStatus | None, Query(alias="status")] = None,
@@ -113,7 +96,7 @@ def list_documents(
     if status_filter:
         statement = statement.where(Document.status == status_filter)
     if cursor:
-        cursor_created_at, cursor_document_id = _decode_document_cursor(cursor)
+        cursor_created_at, cursor_document_id = decode_cursor(cursor, detail="Invalid document cursor")
         statement = statement.where(
             or_(
                 Document.created_at < cursor_created_at,
@@ -122,7 +105,11 @@ def list_documents(
         )
     documents = list(db.scalars(statement).all())
     visible_documents = documents[:limit]
-    next_cursor = _encode_document_cursor(visible_documents[-1]) if len(documents) > limit else None
+    next_cursor = (
+        encode_cursor(visible_documents[-1].created_at, visible_documents[-1].id)
+        if len(documents) > limit
+        else None
+    )
     return {"items": [_document_summary(document) for document in visible_documents], "next_cursor": next_cursor}
 
 
@@ -338,26 +325,6 @@ def document_processing_status(
     }
 
 
-def _message_payload(message: Message) -> dict[str, object]:
-    return {
-        "id": str(message.id),
-        "role": _enum_value(message.role),
-        "content": message.content,
-        "created_at": message.created_at.isoformat(),
-        "sources": [
-            {
-                "source_id": str(source.id),
-                "chunk_id": str(source.chunk_id) if source.chunk_id else None,
-                "page_start": source.page_start,
-                "page_end": source.page_end,
-                "excerpt": source.excerpt,
-                "score": source.score,
-            }
-            for source in message.sources
-        ],
-    }
-
-
 @router.get("/api/documents/{document_id}/chat")
 def get_document_chat(
     document_id: UUID,
@@ -373,7 +340,7 @@ def get_document_chat(
             "document_id": str(document.id),
             "title": chat.title,
         },
-        "messages": [_message_payload(message) for message in chat.messages],
+        "messages": [message_payload(message) for message in chat.messages],
     }
 
 

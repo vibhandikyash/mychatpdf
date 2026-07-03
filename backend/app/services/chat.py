@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Chat,
+    ChatDocument,
     Document,
     DocumentChunk,
     DocumentStatus,
@@ -116,13 +117,35 @@ DOCUMENT_INSIGHT_SUMMARY_PHRASES = (
 )
 
 
+AUTO_TITLE_MAX_CHARS = 80
+
+
+def create_chat(db: Session, user: User, documents: list[Document], title: str | None = None) -> Chat:
+    chat = Chat(
+        user_id=user.id,
+        # ponytail: chats.document_id mirrors single-doc scope so the Phase 1
+        # per-document routes stay a column match; M2 reads scope only.
+        document_id=documents[0].id if len(documents) == 1 else None,
+        title=title,
+    )
+    db.add(chat)
+    db.flush()
+    for position, document in enumerate(documents):
+        db.add(ChatDocument(chat_id=chat.id, document_id=document.id, position=position))
+    db.commit()
+    db.refresh(chat)
+    return chat
+
+
 def get_or_create_chat(db: Session, user: User, document: Document) -> Chat:
-    chat = db.scalar(select(Chat).where(Chat.document_id == document.id, Chat.user_id == user.id))
+    chat = db.scalar(
+        select(Chat)
+        .where(Chat.document_id == document.id, Chat.user_id == user.id)
+        .order_by(Chat.created_at)
+        .limit(1)
+    )
     if chat is None:
-        chat = Chat(user_id=user.id, document_id=document.id, title=document.original_filename)
-        db.add(chat)
-        db.commit()
-        db.refresh(chat)
+        chat = create_chat(db, user, [document], title=document.original_filename)
     return chat
 
 
@@ -422,21 +445,29 @@ def stream_chat_response(
     document: Document,
     content: str,
     vector_service: VectorService,
+    chat: Chat | None = None,
 ) -> Iterator[str]:
     if document.status != DocumentStatus.READY:
         yield format_sse("error", {"message": "Document is not ready for chat"})
         return
 
-    chat = get_or_create_chat(db, user, document)
+    if chat is None:
+        chat = get_or_create_chat(db, user, document)
+    # ponytail: M2 replaces single-document retrieval with query_scope over the
+    # full chat scope; until then a multi-doc message has no single document.
+    message_document_id = document.id if len(chat.documents) <= 1 else None
     prior_messages = list(
         db.scalars(
             select(Message).where(Message.chat_id == chat.id).order_by(Message.created_at)
         )
     )
     contextual_question = build_contextual_question(content, prior_messages)
+    if not chat.title:
+        chat.title = content[:AUTO_TITLE_MAX_CHARS]
+    chat.updated_at = utc_now()
     user_message = Message(
         user_id=user.id,
-        document_id=document.id,
+        document_id=message_document_id,
         chat_id=chat.id,
         role=MessageRole.USER,
         status=MessageStatus.SUCCEEDED,
@@ -445,7 +476,7 @@ def stream_chat_response(
     )
     assistant_message = Message(
         user_id=user.id,
-        document_id=document.id,
+        document_id=message_document_id,
         chat_id=chat.id,
         role=MessageRole.ASSISTANT,
         status=MessageStatus.PENDING,
