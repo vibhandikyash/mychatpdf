@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { AuthenticateWithRedirectCallback, ClerkProvider, UserButton, useAuth } from "@clerk/clerk-react";
 import {
+  CreditCard,
   FilePlus2,
   FileText,
   Library,
@@ -10,7 +11,7 @@ import {
 } from "lucide-react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { AuthPage } from "./features/auth/AuthPages";
-import { ApiClient, createAuthenticatedApiClient } from "./api/client";
+import { ApiClient, createAuthenticatedApiClient, LimitExceededError } from "./api/client";
 import {
   deleteDocument,
   getDocument,
@@ -23,13 +24,15 @@ import {
 } from "./api/documents";
 import { createChat, deleteChat, getChat, listChats, renameChat, streamChatMessage } from "./api/chats";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";
+import { BillingPage } from "./features/billing/BillingPage";
+import { LimitExceededNotice } from "./features/billing/LimitExceededNotice";
 import { BrandLockup } from "./features/brand/Brand";
 import { ChatHistory } from "./features/chats/ChatHistory";
 import { ChatView } from "./features/chats/ChatView";
 import { ScopePicker } from "./features/chats/ScopePicker";
+import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { DocumentLibrary } from "./features/documents/DocumentLibrary";
 import { DocumentWorkspace } from "./features/documents/DocumentWorkspace";
-import { UploadHome } from "./features/upload/UploadHome";
 import { ChatMessage, ChatSummary, DocumentStatus, DocumentSummary, WorkspaceDocument } from "./types";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
@@ -62,7 +65,17 @@ export function App() {
         element={
           <RequireAuth>
             <AppShell>
-              <HomeRoute />
+              <DashboardRoute />
+            </AppShell>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/app/billing"
+        element={
+          <RequireAuth>
+            <AppShell>
+              <BillingRoute />
             </AppShell>
           </RequireAuth>
         }
@@ -309,6 +322,9 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <NavItem to="/app/chats" icon={<MessagesSquare size={17} aria-hidden="true" />} onNavigate={onNavigate}>
               Conversations
             </NavItem>
+            <NavItem to="/app/billing" icon={<CreditCard size={17} aria-hidden="true" />} onNavigate={onNavigate}>
+              Billing
+            </NavItem>
           </div>
         </section>
       </nav>
@@ -396,23 +412,9 @@ function NavItem({
   );
 }
 
-function HomeRoute() {
+function DashboardRoute() {
   const navigate = useNavigate();
   const api = useAuthenticatedApiClient();
-  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
-
-  useEffect(() => {
-    if (!api) {
-      return;
-    }
-
-    void listDocuments(api)
-      .then((nextDocuments) => {
-        setDocuments(nextDocuments);
-        notifyDocumentsChanged({ documents: nextDocuments });
-      })
-      .catch(() => undefined);
-  }, [api]);
 
   async function onUploadFile(file: File) {
     if (!api) {
@@ -423,7 +425,6 @@ function HomeRoute() {
     try {
       const result = await uploadDocument(api, file);
       const uploadedDocument = createUploadedDocumentSummary(result.documentId, result.status, file);
-      setDocuments((current) => [uploadedDocument, ...current.filter((document) => document.id !== uploadedDocument.id)]);
       notifyDocumentsChanged({ document: uploadedDocument });
       navigate(`/app/documents/${result.documentId}`, {
         state: {
@@ -440,11 +441,32 @@ function HomeRoute() {
   }
 
   return (
-    <UploadHome
-      documents={documents}
+    <DashboardPage
+      api={api}
       onUploadFile={onUploadFile}
-      onOpenDocument={(documentId) => navigate(documentId === "documents" ? "/app/documents" : `/app/documents/${documentId}`)}
+      onOpenChat={(chat) =>
+        navigate(chat.documents.length === 1 ? `/app/documents/${chat.documents[0].id}` : `/app/chats/${chat.id}`)
+      }
     />
+  );
+}
+
+function BillingRoute() {
+  const api = useAuthenticatedApiClient();
+  return <BillingPage api={api} />;
+}
+
+type RouteError = string | LimitExceededError | null;
+
+function ErrorBanner({ error }: { error: RouteError }) {
+  if (!error) {
+    return null;
+  }
+
+  return (
+    <div className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">
+      {typeof error === "string" ? error : <LimitExceededNotice error={error} />}
+    </div>
   );
 }
 
@@ -567,7 +589,7 @@ function NewChatRoute() {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<RouteError>(null);
 
   useEffect(() => {
     if (!api) {
@@ -603,17 +625,15 @@ function NewChatRoute() {
     try {
       const chat = await createChat(api, documentIds, title);
       navigate(`/app/chats/${chat.id}`);
-    } catch {
-      setErrorMessage("Unable to start this conversation right now.");
+    } catch (error) {
+      setErrorMessage(error instanceof LimitExceededError ? error : "Unable to start this conversation right now.");
       setIsCreating(false);
     }
   }
 
   return (
     <>
-      {errorMessage ? (
-        <div className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">{errorMessage}</div>
-      ) : null}
+      <ErrorBanner error={errorMessage} />
       <ScopePicker
         documents={documents}
         isLoading={isLoading}
@@ -629,7 +649,7 @@ function ChatRoute() {
   const api = useAuthenticatedApiClient();
   const [chat, setChat] = useState<ChatSummary | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<RouteError>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -710,15 +730,13 @@ function ChatRoute() {
       setMessages((current) => upsertMessage(current, streamedAssistantId, assistantMessage));
     } catch (error) {
       setMessages((current) => removeEmptyAssistantDraft(current, [pendingAssistantId, streamedAssistantId]));
-      setErrorMessage(readableChatError(error));
+      setErrorMessage(error instanceof LimitExceededError ? error : readableChatError(error));
     }
   }
 
   return (
     <>
-      {errorMessage ? (
-        <div className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">{errorMessage}</div>
-      ) : null}
+      <ErrorBanner error={errorMessage} />
       <ChatView chat={chat} messages={messages} isLoading={isLoading} onSendMessage={handleSendMessage} />
     </>
   );
@@ -730,7 +748,7 @@ function WorkspaceRoute() {
   const api = useAuthenticatedApiClient();
   const [document, setDocument] = useState<WorkspaceDocument>(() => findWorkspaceDocument(documentId, location.state));
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<RouteError>(null);
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(true);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
@@ -963,7 +981,7 @@ function WorkspaceRoute() {
       }
 
       setMessages((current) => removeEmptyAssistantDraft(current, [pendingAssistantId, streamedAssistantId]));
-      setErrorMessage(readableChatError(error));
+      setErrorMessage(error instanceof LimitExceededError ? error : readableChatError(error));
     } finally {
       if (chatAbortControllerRef.current === abortController) {
         chatAbortControllerRef.current = null;
@@ -977,9 +995,7 @@ function WorkspaceRoute() {
 
   return (
     <>
-      {errorMessage ? (
-        <div className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">{errorMessage}</div>
-      ) : null}
+      <ErrorBanner error={errorMessage} />
       <DocumentWorkspace
         document={document}
         messages={messages}
