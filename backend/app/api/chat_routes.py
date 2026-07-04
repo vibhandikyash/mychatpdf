@@ -4,13 +4,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user, get_owned_chat
 from app.api.pagination import decode_cursor, encode_cursor
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
-from app.models import Chat, Document, DocumentStatus, Message, User
+from app.models import Chat, Document, DocumentStatus, Message, MessageSource, User
 from app.services.billing import get_active_plan
 from app.services.chat import create_chat, stream_chat_response
 from app.services.usage import check_model_allowed, check_scope_size
@@ -88,6 +88,7 @@ def list_chats(
 ) -> dict[str, object]:
     statement = (
         select(Chat)
+        .options(selectinload(Chat.documents))
         .where(Chat.user_id == current_user.id)
         .order_by(Chat.created_at.desc(), Chat.id.desc())
         .limit(limit + 1)
@@ -150,6 +151,14 @@ def chat_detail(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     chat = get_owned_chat(db, current_user, chat_id)
+    db.scalars(
+        select(Chat)
+        .options(
+            selectinload(Chat.documents),
+            selectinload(Chat.messages).selectinload(Message.sources).selectinload(MessageSource.document),
+        )
+        .where(Chat.id == chat.id)
+    ).first()
     return {
         "chat": _chat_summary(chat),
         "messages": [message_payload(message) for message in chat.messages],
