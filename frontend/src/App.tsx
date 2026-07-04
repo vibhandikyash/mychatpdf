@@ -33,7 +33,7 @@ import { ScopePicker } from "./features/chats/ScopePicker";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { DocumentLibrary } from "./features/documents/DocumentLibrary";
 import { DocumentWorkspace } from "./features/documents/DocumentWorkspace";
-import { ChatMessage, ChatSummary, DocumentStatus, DocumentSummary, WorkspaceDocument } from "./types";
+import { ChatMessage, ChatSummary, DocumentFormat, DocumentStatus, DocumentSummary, WorkspaceDocument } from "./types";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const e2eAuthBypassEnabled = import.meta.env.VITE_E2E_AUTH_BYPASS === "true";
@@ -421,7 +421,8 @@ function DashboardRoute() {
       return;
     }
 
-    const localPreviewUrl = URL.createObjectURL(file);
+    const format = documentFormatFromFilename(file.name);
+    const localPreviewUrl = format === "pdf" ? URL.createObjectURL(file) : undefined;
     try {
       const result = await uploadDocument(api, file);
       const uploadedDocument = createUploadedDocumentSummary(result.documentId, result.status, file);
@@ -429,13 +430,16 @@ function DashboardRoute() {
       navigate(`/app/documents/${result.documentId}`, {
         state: {
           localPreviewUrl,
+          format,
           originalFilename: file.name,
           fileSizeBytes: file.size,
           createdAt: new Date().toISOString()
         }
       });
     } catch (error) {
-      URL.revokeObjectURL(localPreviewUrl);
+      if (localPreviewUrl) {
+        URL.revokeObjectURL(localPreviewUrl);
+      }
       throw error;
     }
   }
@@ -444,9 +448,7 @@ function DashboardRoute() {
     <DashboardPage
       api={api}
       onUploadFile={onUploadFile}
-      onOpenChat={(chat) =>
-        navigate(chat.documents.length === 1 ? `/app/documents/${chat.documents[0].id}` : `/app/chats/${chat.id}`)
-      }
+      onOpenChat={(chat) => navigate(`/app/chats/${chat.id}`)}
     />
   );
 }
@@ -560,9 +562,7 @@ function ChatsRoute() {
       hasMore={Boolean(nextCursor)}
       isLoadingMore={isLoadingMore}
       onNew={() => navigate("/app/chats/new")}
-      onOpen={(chat) =>
-        navigate(chat.documents.length === 1 ? `/app/documents/${chat.documents[0].id}` : `/app/chats/${chat.id}`)
-      }
+      onOpen={(chat) => navigate(`/app/chats/${chat.id}`)}
       onRename={(chatId, title) => {
         if (!api) {
           return;
@@ -651,6 +651,7 @@ function ChatRoute() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [errorMessage, setErrorMessage] = useState<RouteError>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const chatAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!api || !chatId) {
@@ -686,6 +687,8 @@ function ChatRoute() {
 
     return () => {
       cancelled = true;
+      chatAbortControllerRef.current?.abort();
+      chatAbortControllerRef.current = null;
     };
   }, [api, chatId]);
 
@@ -694,6 +697,9 @@ function ChatRoute() {
       return;
     }
 
+    chatAbortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    chatAbortControllerRef.current = abortController;
     const localMessagePrefix = `local-${Date.now()}`;
     const userMessage: ChatMessage = {
       id: `${localMessagePrefix}-user`,
@@ -716,6 +722,7 @@ function ChatRoute() {
 
     try {
       const assistantMessage = await streamChatMessage(api, chatId, content, {
+        signal: abortController.signal,
         onStart: (messageId) => {
           setMessages((current) => replaceMessageId(current, pendingAssistantId, messageId));
           streamedAssistantId = messageId;
@@ -730,7 +737,13 @@ function ChatRoute() {
       setMessages((current) => upsertMessage(current, streamedAssistantId, assistantMessage));
     } catch (error) {
       setMessages((current) => removeEmptyAssistantDraft(current, [pendingAssistantId, streamedAssistantId]));
-      setErrorMessage(error instanceof LimitExceededError ? error : readableChatError(error));
+      if (!isAbortError(error)) {
+        setErrorMessage(error instanceof LimitExceededError ? error : readableChatError(error));
+      }
+    } finally {
+      if (chatAbortControllerRef.current === abortController) {
+        chatAbortControllerRef.current = null;
+      }
     }
   }
 
@@ -1044,10 +1057,18 @@ function createUploadedDocumentSummary(documentId: string, status: DocumentStatu
   return {
     id: documentId,
     originalFilename: file.name,
+    format: documentFormatFromFilename(file.name),
     status,
     fileSizeBytes: file.size,
     createdAt: new Date().toISOString()
   };
+}
+
+const DOCUMENT_FORMATS: DocumentFormat[] = ["pdf", "docx", "pptx", "txt", "rtf"];
+
+function documentFormatFromFilename(filename: string): DocumentFormat | undefined {
+  const extension = filename.split(".").pop()?.toLowerCase() ?? "";
+  return DOCUMENT_FORMATS.find((format) => format === extension);
 }
 
 interface PdfAccess {
@@ -1144,10 +1165,11 @@ function findWorkspaceDocument(documentId?: string, routeState?: unknown): Works
   return {
     id: documentId ?? "unknown",
     originalFilename: uploadPreview?.originalFilename ?? "Opening document...",
+    format: uploadPreview?.format,
     status: "uploaded",
     fileSizeBytes: uploadPreview?.fileSizeBytes ?? 0,
     createdAt: uploadPreview?.createdAt ?? new Date().toISOString(),
-    signedPdfUrl: uploadPreview?.localPreviewUrl
+    signedPdfUrl: uploadPreview?.format && uploadPreview.format !== "pdf" ? undefined : uploadPreview?.localPreviewUrl
   };
 }
 
@@ -1158,21 +1180,25 @@ function readUploadPreviewState(state: unknown) {
 
   const maybeState = state as Partial<{
     localPreviewUrl: unknown;
+    format: unknown;
     originalFilename: unknown;
     fileSizeBytes: unknown;
     createdAt: unknown;
   }>;
 
-  if (typeof maybeState.localPreviewUrl !== "string") {
+  const localPreviewUrl = typeof maybeState.localPreviewUrl === "string" ? maybeState.localPreviewUrl : undefined;
+  const originalFilename =
+    typeof maybeState.originalFilename === "string" && maybeState.originalFilename.trim()
+      ? maybeState.originalFilename
+      : undefined;
+  if (!localPreviewUrl && !originalFilename) {
     return null;
   }
 
   return {
-    localPreviewUrl: maybeState.localPreviewUrl,
-    originalFilename:
-      typeof maybeState.originalFilename === "string" && maybeState.originalFilename.trim()
-        ? maybeState.originalFilename
-        : "Uploaded PDF",
+    localPreviewUrl,
+    format: DOCUMENT_FORMATS.find((format) => format === maybeState.format),
+    originalFilename: originalFilename ?? "Uploaded PDF",
     fileSizeBytes: typeof maybeState.fileSizeBytes === "number" ? maybeState.fileSizeBytes : 0,
     createdAt: typeof maybeState.createdAt === "string" ? maybeState.createdAt : new Date().toISOString()
   };

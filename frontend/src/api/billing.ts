@@ -10,7 +10,7 @@ interface BackendPlan {
   limit_uploads: number;
   limit_storage_mb: number;
   limit_document_scope: number;
-  allowed_chat_models: string[];
+  allowed_chat_models: string[] | null;
 }
 
 interface BackendSubscriptionSummary {

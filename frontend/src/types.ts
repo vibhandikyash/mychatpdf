@@ -72,7 +72,7 @@ export interface BillingPlan {
   limitUploads: number;
   limitStorageMb: number;
   limitDocumentScope: number;
-  allowedChatModels: string[];
+  allowedChatModels: string[] | null;
 }
 
 export interface SubscriptionSummary {
