@@ -175,9 +175,13 @@ class BillingService:
         elif event_type == "customer.subscription.deleted":
             self._upsert_subscription(db, data_object, force_status="canceled")
         elif event_type == "invoice.payment_failed":
+            # 2025-03-31+ Stripe API versions moved the reference under parent.subscription_details.
+            subscription_id = data_object.get("subscription") or (
+                (data_object.get("parent") or {}).get("subscription_details") or {}
+            ).get("subscription")
             subscription = db.scalar(
                 select(Subscription).where(
-                    Subscription.stripe_subscription_id == data_object.get("subscription")
+                    Subscription.stripe_subscription_id == subscription_id
                 )
             )
             if subscription is not None:
@@ -231,8 +235,14 @@ class BillingService:
             subscription.plan_id = plan_id
         subscription.status = force_status or subscription_object.get("status") or subscription.status
         subscription.cancel_at_period_end = bool(subscription_object.get("cancel_at_period_end", False))
-        period_start = subscription_object.get("current_period_start")
-        period_end = subscription_object.get("current_period_end")
+        # 2025-03-31+ Stripe API versions moved period bounds onto subscription items.
+        first_item = items[0] if items else {}
+        period_start = subscription_object.get("current_period_start") or first_item.get(
+            "current_period_start"
+        )
+        period_end = subscription_object.get("current_period_end") or first_item.get(
+            "current_period_end"
+        )
         if period_start:
             subscription.current_period_start = datetime.fromtimestamp(period_start, tz=timezone.utc)
         if period_end:

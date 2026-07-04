@@ -1,5 +1,8 @@
+import pytest
+
 from app.models import Document, DocumentStatus, ProcessingJob, ProcessingJobStatus, User
 from app.models import DocumentChunk
+from app.services.extractors import DocumentTextExtractor
 from app.services.processing import (
     ExtractedPage,
     MaxPagesExceededError,
@@ -91,6 +94,43 @@ class InsightVectorService(RecordingVectorService):
 class FailingInsightVectorService(RecordingVectorService):
     def generate_document_insight(self, _sources):
         raise RuntimeError("insight unavailable")
+
+
+class StaticStorage:
+    def __init__(self, data: bytes):
+        self.data = data
+
+    def download_pdf(self, _document):
+        return self.data
+
+
+def _blank_pdf_bytes(page_count: int) -> bytes:
+    import fitz
+
+    pdf = fitz.open()
+    for _ in range(page_count):
+        pdf.new_page()
+    return pdf.tobytes()
+
+
+def _document_with_job(db_session, clerk_id: str, **overrides) -> tuple[Document, ProcessingJob]:
+    user = User(clerk_user_id=clerk_id, email=f"{clerk_id}@example.com")
+    fields = {
+        "user": user,
+        "original_filename": "scan.pdf",
+        "content_type": "application/pdf",
+        "file_size_bytes": 200,
+        "status": DocumentStatus.UPLOADED,
+        "wasabi_bucket": "bucket",
+        "wasabi_object_key": "users/user/documents/doc/original.pdf",
+        "pinecone_namespace": "test",
+    }
+    fields.update(overrides)
+    document = Document(**fields)
+    job = ProcessingJob(user=user, document=document, status=ProcessingJobStatus.QUEUED, current_step="queued")
+    db_session.add_all([user, document, job])
+    db_session.commit()
+    return document, job
 
 
 def test_no_text_processing_marks_document_and_job_failed(db_session):
@@ -319,6 +359,86 @@ def test_processing_fails_before_embedding_when_pdf_exceeds_page_limit(db_sessio
     assert document.failure_code == "max_pdf_pages_exceeded"
     assert job.status == ProcessingJobStatus.FAILED
     assert job.error_code == "max_pdf_pages_exceeded"
+
+
+def test_no_text_pdf_failure_records_page_count(db_session):
+    document, job = _document_with_job(db_session, "user_no_text_pages")
+
+    with pytest.raises(NoExtractableTextError):
+        process_document(
+            db_session,
+            document.id,
+            extractor=DocumentTextExtractor(StaticStorage(_blank_pdf_bytes(3))),
+            vector_service=UnusedVectorService(),
+            max_pdf_pages=300,
+        )
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+    assert document.page_count == 3
+    assert document.failure_code == "no_extractable_text"
+    assert job.error_code == "no_extractable_text"
+
+
+def test_no_text_pdf_over_page_cap_fails_as_max_pages(db_session):
+    document, job = _document_with_job(db_session, "user_no_text_cap")
+
+    with pytest.raises(MaxPagesExceededError):
+        process_document(
+            db_session,
+            document.id,
+            extractor=DocumentTextExtractor(StaticStorage(_blank_pdf_bytes(3))),
+            vector_service=UnusedVectorService(),
+            max_pdf_pages=2,
+        )
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+    assert document.page_count == 3
+    assert document.failure_code == "max_pdf_pages_exceeded"
+    assert "3 pages" in document.failure_message
+    assert job.error_code == "max_pdf_pages_exceeded"
+
+
+def test_unknown_format_document_fails_unsupported_file(db_session):
+    document, job = _document_with_job(
+        db_session, "user_unknown_format", original_filename="weird.xyz", format="xyz"
+    )
+
+    with pytest.raises(UnsupportedFileError):
+        process_document(
+            db_session,
+            document.id,
+            extractor=DocumentTextExtractor(StaticStorage(b"binary soup")),
+            vector_service=UnusedVectorService(),
+        )
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+    assert document.failure_code == "unsupported_file"
+    assert "xyz" in document.failure_message
+    assert job.error_code == "unsupported_file"
+
+
+def test_txt_over_page_cap_message_counts_sections(db_session):
+    document, job = _document_with_job(
+        db_session, "user_txt_cap", original_filename="notes.txt", content_type="text/plain", format="txt"
+    )
+    text = " ".join(f"word{index}" for index in range(900)).encode("utf-8")  # two 800-word sections
+
+    with pytest.raises(MaxPagesExceededError):
+        process_document(
+            db_session,
+            document.id,
+            extractor=DocumentTextExtractor(StaticStorage(text)),
+            vector_service=UnusedVectorService(),
+            max_pdf_pages=1,
+        )
+
+    db_session.refresh(document)
+    assert document.failure_code == "max_pdf_pages_exceeded"
+    assert "2 sections" in document.failure_message
+    assert "1 sections" in document.failure_message
 
 
 def test_unsupported_file_processing_marks_document_and_job_failed(db_session):

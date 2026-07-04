@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.models import Subscription, User
 from app.services.billing import PLAN_SEEDS, BillingService
 
@@ -43,7 +43,7 @@ class FakeStripe:
 
 
 @pytest.fixture
-def fake_stripe(monkeypatch) -> FakeStripe:
+def fake_stripe(app, monkeypatch) -> FakeStripe:
     fake = FakeStripe()
     settings = Settings(
         _env_file=None,
@@ -55,6 +55,9 @@ def fake_stripe(monkeypatch) -> FakeStripe:
     )
     service = BillingService(settings, stripe_client=fake)
     monkeypatch.setattr("app.api.billing_routes.get_billing_service", lambda _settings: service)
+    # The webhook route checks settings.stripe_webhook_secret before touching
+    # the service, so the app must see the configured settings too.
+    app.dependency_overrides[get_settings] = lambda: settings
     return fake
 
 
@@ -295,3 +298,59 @@ def test_webhook_ignores_subscription_for_unknown_customer(client, db_session, f
 
     assert response.status_code == 200
     assert db_session.query(Subscription).count() == 0
+
+
+def test_webhook_returns_503_when_webhook_secret_unconfigured(client):
+    # No fake_stripe fixture: the app keeps the conftest settings, which have
+    # no stripe_webhook_secret.
+    response = _post_webhook(client, {"type": "noop", "data": {"object": {}}})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Billing is not configured"
+
+
+def test_webhook_basil_subscription_created_reads_period_from_items(client, db_session, fake_stripe):
+    _seeded_user(db_session, stripe_customer_id="cus_test123")
+    # 2025-03-31+ (basil) API versions move the period bounds onto the
+    # subscription items instead of the subscription object.
+    event = _subscription_event(
+        "customer.subscription.created",
+        items={
+            "data": [
+                {
+                    "price": {"id": "price_month"},
+                    "current_period_start": 1751328000,
+                    "current_period_end": 1754006400,
+                }
+            ]
+        },
+    )
+    del event["data"]["object"]["current_period_start"]
+    del event["data"]["object"]["current_period_end"]
+
+    response = _post_webhook(client, event)
+
+    assert response.status_code == 200
+    subscription = db_session.query(Subscription).one()
+    assert subscription.current_period_start.replace(tzinfo=timezone.utc) == datetime.fromtimestamp(
+        1751328000, tz=timezone.utc
+    )
+    assert subscription.current_period_end.replace(tzinfo=timezone.utc) == datetime.fromtimestamp(
+        1754006400, tz=timezone.utc
+    )
+
+
+def test_webhook_basil_payment_failed_marks_past_due(client, db_session, fake_stripe):
+    _seeded_user(db_session, stripe_customer_id="cus_test123")
+    _post_webhook(client, _subscription_event("customer.subscription.created"))
+
+    # Basil invoices reference the subscription under parent.subscription_details.
+    event = {
+        "type": "invoice.payment_failed",
+        "data": {"object": {"parent": {"subscription_details": {"subscription": "sub_123"}}}},
+    }
+    response = _post_webhook(client, event)
+
+    assert response.status_code == 200
+    subscription = db_session.query(Subscription).one()
+    assert subscription.status == "past_due"

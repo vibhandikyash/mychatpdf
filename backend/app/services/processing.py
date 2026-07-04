@@ -22,7 +22,10 @@ DEFAULT_CHUNK_OVERLAP_TOKENS = 150
 
 
 class NoExtractableTextError(RuntimeError):
-    pass
+    def __init__(self, message: str, page_count: int | None = None):
+        super().__init__(message)
+        # Pre-filter page count of the document, when the extractor knows it.
+        self.page_count = page_count
 
 
 class UnsupportedFileError(RuntimeError):
@@ -113,7 +116,9 @@ def _fail_unsupported_file(db: Session, document: Document, job: ProcessingJob, 
 
 
 def _fail_max_pages(db: Session, document: Document, job: ProcessingJob, page_count: int, max_pdf_pages: int) -> None:
-    message = f"Document has {page_count} pages, which exceeds the configured limit of {max_pdf_pages} pages."
+    # "Pages" are slides for pptx and 800-word sections for docx/txt/rtf.
+    unit = {"pdf": "pages", "pptx": "slides"}.get(document.format or "pdf", "sections")
+    message = f"Document has {page_count} {unit}, which exceeds the configured limit of {max_pdf_pages} {unit}."
     _fail_job(db, document, job, "max_pdf_pages_exceeded", message)
 
 
@@ -139,7 +144,21 @@ def process_document(
 
     try:
         pages = extractor.extract_pages(document)
-    except NoExtractableTextError:
+    except NoExtractableTextError as error:
+        # An image-only document over the page cap is a page-cap failure, not
+        # a no-text one; check the cap first so the failure code matches.
+        page_count = document.page_count or error.page_count
+        if max_pdf_pages is not None and page_count and page_count > max_pdf_pages:
+            logger.info(
+                "Document exceeded page limit",
+                extra={
+                    "document_id": str(document.id),
+                    "page_count": page_count,
+                    "max_pdf_pages": max_pdf_pages,
+                },
+            )
+            _fail_max_pages(db, document, job, page_count, max_pdf_pages)
+            raise MaxPagesExceededError("max pdf pages exceeded") from error
         logger.info("Document has no extractable text", extra={"document_id": str(document.id)})
         _fail_no_text(db, document, job)
         raise

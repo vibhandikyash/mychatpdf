@@ -57,7 +57,11 @@ def current_period(db: Session, user: User) -> UsagePeriod:
         db.commit()
         return period
     except IntegrityError:
-        return db.scalar(statement)
+        period = db.scalar(statement)
+        if period is None:
+            # The conflict was not the winner's row (callers deref the result).
+            raise
+        return period
 
 
 def check_and_increment(db: Session, user: User, kind: Literal["ai_message", "upload"]) -> None:
@@ -71,11 +75,24 @@ def check_and_increment(db: Session, user: User, kind: Literal["ai_message", "up
         .where(UsagePeriod.id == period.id, counter < limit)
         .values({counter_name: counter + 1})
     )
-    # ponytail: the increment stays uncommitted until the caller's commit, so a
-    # failed request (e.g. storage 502) does not burn a credit.
+    # ponytail: the increment stays uncommitted until the caller's next commit.
+    # Uploads fail before that commit, so they never burn a credit; chat commits
+    # its messages before generation and refunds via refund_ai_message on failure.
     if result.rowcount == 0:
         db.refresh(period)
         raise LimitExceeded(kind, limit=limit, used=getattr(period, counter_name))
+    db.expire(period)
+
+
+def refund_ai_message(db: Session, user: User) -> None:
+    """Return the credit taken by check_and_increment when the increment was
+    already committed but the AI generation failed afterwards."""
+    period = current_period(db, user)
+    db.execute(
+        update(UsagePeriod)
+        .where(UsagePeriod.id == period.id, UsagePeriod.ai_messages_used > 0)
+        .values(ai_messages_used=UsagePeriod.ai_messages_used - 1)
+    )
     db.expire(period)
 
 

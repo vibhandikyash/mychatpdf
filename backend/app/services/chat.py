@@ -21,7 +21,8 @@ from app.models import (
     User,
 )
 from app.models.mixins import utc_now
-from app.services.usage import check_and_increment
+from app.services.billing import get_active_plan
+from app.services.usage import check_and_increment, check_model_allowed, refund_ai_message
 from app.services.vector import (
     DOCUMENT_INTELLIGENCE_SOURCE_LIMIT,
     DOCUMENT_INTELLIGENCE_VERSION,
@@ -51,8 +52,8 @@ FOLLOW_UP_TERMS = {
     "above",
     "same",
 }
-# ponytail: merge limit stays a constant here; VectorService reads the
-# configurable settings.max_context_sources for scope-fair retrieval.
+# ponytail: default merge limit for direct callers/tests; the stream path reads
+# the configurable settings.max_context_sources from the vector service.
 MAX_CONTEXT_SOURCES = 8
 EXACT_REFERENCE_SOURCE_LIMIT = 3
 KEYWORD_SOURCE_LIMIT = 3
@@ -471,6 +472,10 @@ def stream_chat_response(
     # per-document stream. This runs eagerly (before the response starts
     # streaming), so LimitExceeded surfaces as an HTTP 402 rather than a
     # mid-stream error, and it runs before the OpenAI call.
+    if chat is not None and chat.model:
+        # Re-validate the stored model against the current plan so a user who
+        # downgraded cannot keep streaming with a premium model.
+        check_model_allowed(get_active_plan(db, user), chat.model)
     check_and_increment(db, user, "ai_message")
 
     if chat is None:
@@ -560,11 +565,20 @@ def _generate_chat_response(
                     limit=DOCUMENT_OVERVIEW_SOURCE_LIMIT,
                 )
             else:
+                # Test fakes may not carry settings; fall back to the constant.
+                limit = getattr(
+                    getattr(vector_service, "settings", None), "max_context_sources", MAX_CONTEXT_SOURCES
+                )
                 if single_document is not None:
                     vector_sources = vector_service.query_document(user, single_document, contextual_question)
+                    sources = _merge_sources(exact_sources, keyword_sources, vector_sources, limit=limit)
                 else:
                     vector_sources = vector_service.query_scope(user, scope, contextual_question)
-                sources = _merge_sources(exact_sources, keyword_sources, vector_sources)
+                    # Cap lexical matches at half the budget so keyword hits
+                    # (collected in scope order) cannot starve query_scope's
+                    # fair per-document vector selection.
+                    lexical = _merge_sources(exact_sources, keyword_sources, limit=limit // 2)
+                    sources = _merge_sources(lexical, vector_sources, limit=limit)
             sources = _hydrate_source_context(db, scope, sources)
             answer_kwargs = {"model": chat.model} if chat.model else {}
             for token in vector_service.stream_answer_tokens(contextual_question, sources, **answer_kwargs):
@@ -575,6 +589,9 @@ def _generate_chat_response(
             "Chat response generation failed",
             extra={"chat_id": str(chat.id), "message_id": str(assistant_message.id)},
         )
+        # The prologue's increment became durable when the messages were
+        # committed; give the credit back since no answer was produced.
+        refund_ai_message(db, user)
         assistant_message.content = "".join(answer_parts)
         assistant_message.status = MessageStatus.FAILED
         assistant_message.message_metadata = {"error": str(exc)}

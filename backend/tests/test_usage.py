@@ -1,7 +1,16 @@
 from datetime import datetime, timezone
 from io import BytesIO
 
-from app.models import Document, DocumentStatus, Message, Subscription, UsagePeriod, User
+from app.models import (
+    Document,
+    DocumentStatus,
+    Message,
+    MessageRole,
+    MessageStatus,
+    Subscription,
+    UsagePeriod,
+    User,
+)
 from app.services.chat import create_chat
 from app.services.usage import current_period
 
@@ -113,6 +122,57 @@ def test_message_within_limit_streams_and_increments_counter(authenticated_clien
     period = db_session.query(UsagePeriod).filter_by(user_id=user.id).one()
     db_session.refresh(period)
     assert period.ai_messages_used == 1
+
+
+def test_stream_rejects_premium_model_after_downgrade(authenticated_client, db_session, monkeypatch):
+    user = _seeded_user(db_session)
+    document = _ready_document(user)
+    db_session.add(document)
+    db_session.commit()
+    # Chat was created while the user had a pro plan; the subscription is gone.
+    chat = create_chat(db_session, user, [document], model="gpt-4.1")
+    vector_service = RecordingVectorService()
+    monkeypatch.setattr("app.api.chat_routes.get_vector_service", lambda _settings: vector_service)
+
+    response = authenticated_client.post(
+        f"/api/chats/{chat.id}/messages/stream", json={"content": "Hello?"}
+    )
+
+    assert response.status_code == 402
+    assert response.json()["kind"] == "chat_model"
+    assert vector_service.query_calls == 0
+    assert vector_service.answer_calls == 0
+    assert db_session.query(Message).count() == 0
+
+
+def test_failed_generation_refunds_ai_message_credit(authenticated_client, db_session, monkeypatch):
+    user = _seeded_user(db_session)
+    document = _ready_document(user)
+    db_session.add(document)
+    db_session.commit()
+    chat = create_chat(db_session, user, [document])
+
+    class FailingVectorService(RecordingVectorService):
+        def stream_answer_tokens(self, _question, _sources, **_kwargs):
+            raise RuntimeError("OpenAI unavailable")
+            yield ""
+
+    monkeypatch.setattr("app.api.chat_routes.get_vector_service", lambda _settings: FailingVectorService())
+
+    with authenticated_client.stream(
+        "POST", f"/api/chats/{chat.id}/messages/stream", json={"content": "Hello?"}
+    ) as response:
+        body = response.read().decode("utf-8")
+
+    assert response.status_code == 200
+    assert "event: error" in body
+    period = db_session.query(UsagePeriod).filter_by(user_id=user.id).one()
+    db_session.refresh(period)
+    assert period.ai_messages_used == 0
+    user_message = db_session.query(Message).filter_by(role=MessageRole.USER).one()
+    assert user_message.status == MessageStatus.SUCCEEDED
+    assistant_message = db_session.query(Message).filter_by(role=MessageRole.ASSISTANT).one()
+    assert assistant_message.status == MessageStatus.FAILED
 
 
 def test_upload_limit_returns_402(authenticated_client, db_session):

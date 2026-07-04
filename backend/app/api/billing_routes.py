@@ -84,6 +84,11 @@ async def stripe_webhook(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, bool]:
+    if not settings.stripe_webhook_secret:
+        logger.error("Received Stripe webhook but STRIPE_WEBHOOK_SECRET is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=BILLING_NOT_CONFIGURED_DETAIL
+        )
     service = get_billing_service(settings)
     payload = await request.body()
     signature = request.headers.get("stripe-signature", "")

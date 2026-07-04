@@ -8,9 +8,11 @@ from app.models import (
     Message,
     MessageRole,
     MessageSource,
+    Subscription,
     User,
 )
 from app.services.chat import create_chat, stream_chat_response
+from app.services.vector import RetrievedSource
 
 
 def _authenticated_user(db_session) -> User:
@@ -163,7 +165,18 @@ def test_create_chat_rejects_disallowed_model(authenticated_client, db_session):
 def test_stream_uses_chat_model_override(db_session):
     user = _authenticated_user(db_session)
     document = _ready_document(user, "paper.pdf")
-    db_session.add(document)
+    # o4-mini is only allowed on pro plans; the stream re-checks the plan.
+    db_session.add_all(
+        [
+            document,
+            Subscription(
+                user_id=user.id,
+                plan_id="pro_monthly",
+                stripe_subscription_id="sub_123",
+                status="active",
+            ),
+        ]
+    )
     db_session.commit()
     chat = create_chat(db_session, user, [document], model="o4-mini")
 
@@ -183,3 +196,112 @@ def test_stream_uses_chat_model_override(db_session):
     list(stream_chat_response(db_session, user, [document], "What is the notice period?", vector_service, chat=chat))
 
     assert vector_service.model == "o4-mini"
+
+
+def test_multi_doc_merge_keeps_vector_sources_when_keywords_saturate(db_session):
+    user = _authenticated_user(db_session)
+    documents = [_ready_document(user, f"contract-{index}.pdf") for index in range(3)]
+    keyword_chunks = [
+        _chunk(
+            user,
+            document,
+            chunk_index,
+            chunk_index + 1,
+            f"Termination notice terms for contract {doc_index} clause {chunk_index}.",
+            f"vec-{doc_index}-{chunk_index}",
+        )
+        for doc_index, document in enumerate(documents)
+        for chunk_index in range(3)
+    ]
+    # Only reachable through vector retrieval: matches no keyword terms.
+    vector_chunk = _chunk(user, documents[2], 3, 9, "Arbitration is governed by the Vienna rules.", "vec-2-3")
+    db_session.add_all([*documents, *keyword_chunks, vector_chunk])
+    db_session.commit()
+    chat = create_chat(db_session, user, documents)
+
+    class SaturatingVectorService:
+        def query_scope(self, _user, _documents, _question):
+            return [
+                RetrievedSource(
+                    chunk_id=str(vector_chunk.id),
+                    page_start=9,
+                    page_end=9,
+                    excerpt=vector_chunk.text_excerpt,
+                    score=0.95,
+                    document_id=str(documents[2].id),
+                    document_filename=documents[2].original_filename,
+                )
+            ]
+
+        def stream_answer_tokens(self, _question, _sources):
+            yield "ok"
+
+    list(
+        stream_chat_response(
+            db_session,
+            user,
+            documents,
+            "Compare the termination notice requirements.",
+            SaturatingVectorService(),
+            chat=chat,
+        )
+    )
+
+    # 9 keyword sources would fill the whole budget; the vector source must
+    # still make it into the persisted sources.
+    persisted_chunk_ids = {source.chunk_id for source in db_session.query(MessageSource).all()}
+    assert vector_chunk.id in persisted_chunk_ids
+
+
+def test_single_doc_merge_keeps_all_lexical_sources_before_vector(db_session):
+    user = _authenticated_user(db_session)
+    document = _ready_document(user, "handbook.pdf")
+    exact_chunks = [
+        _chunk(user, document, index, index + 1, f"Problem 12 asks about the liability cap, part {index}.", f"vec-e-{index}")
+        for index in range(3)
+    ]
+    keyword_chunks = [
+        _chunk(user, document, index + 3, index + 4, f"Termination notice terms, clause {index}.", f"vec-k-{index}")
+        for index in range(3)
+    ]
+    vector_chunks = [
+        _chunk(user, document, index + 6, index + 7, f"Unrelated appendix text {index}.", f"vec-v-{index}")
+        for index in range(3)
+    ]
+    db_session.add_all([document, *exact_chunks, *keyword_chunks, *vector_chunks])
+    db_session.commit()
+    chat = create_chat(db_session, user, [document])
+
+    class VectorOnlyService:
+        def query_document(self, _user, _document, _question):
+            return [
+                RetrievedSource(
+                    chunk_id=str(chunk.id),
+                    page_start=chunk.page_start,
+                    page_end=chunk.page_end,
+                    excerpt=chunk.text_excerpt,
+                    score=0.9,
+                )
+                for chunk in vector_chunks
+            ]
+
+        def stream_answer_tokens(self, _question, _sources):
+            yield "ok"
+
+    list(
+        stream_chat_response(
+            db_session,
+            user,
+            [document],
+            "What is the answer to problem 12 about the termination notice requirements?",
+            VectorOnlyService(),
+            chat=chat,
+        )
+    )
+
+    # Single-doc merge is unchanged: all 6 lexical sources keep their slots
+    # (no half-budget cap), and vector sources fill the rest up to 8.
+    persisted_chunk_ids = {source.chunk_id for source in db_session.query(MessageSource).all()}
+    assert {chunk.id for chunk in exact_chunks} <= persisted_chunk_ids
+    assert {chunk.id for chunk in keyword_chunks} <= persisted_chunk_ids
+    assert len(persisted_chunk_ids) == 8

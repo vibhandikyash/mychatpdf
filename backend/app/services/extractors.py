@@ -23,7 +23,9 @@ def _word_sections(text: str) -> list[ExtractedPage]:
 
 def _require_text(pages: list[ExtractedPage]) -> list[ExtractedPage]:
     if not any(page.text.strip() for page in pages):
-        raise NoExtractableTextError("no extractable text")
+        # Carry the page count so the max-pages cap can still be enforced for
+        # image-only documents.
+        raise NoExtractableTextError("no extractable text", page_count=len(pages))
     return pages
 
 
@@ -125,7 +127,15 @@ class DocumentTextExtractor:
         if not file_bytes:
             return []
 
-        extract = EXTRACTORS.get(document.format or "pdf", extract_pdf)
-        pages = extract(file_bytes)
+        document_format = document.format or "pdf"
+        extract = EXTRACTORS.get(document_format)
+        if extract is None:
+            raise UnsupportedFileError(f"No extractor is registered for format '{document_format}'.")
+        try:
+            pages = extract(file_bytes)
+        except NoExtractableTextError as error:
+            if error.page_count is not None:
+                document.page_count = error.page_count
+            raise
         document.page_count = len(pages)
         return pages

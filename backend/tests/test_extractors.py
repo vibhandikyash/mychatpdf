@@ -5,6 +5,7 @@ import pytest
 from app.services.extractors import (
     EXTRACTORS,
     extract_docx,
+    extract_pdf,
     extract_pptx,
     extract_rtf,
     extract_txt,
@@ -100,3 +101,16 @@ def test_whitespace_only_txt_raises_no_extractable_text():
 def test_garbage_bytes_as_docx_raises_unsupported_file_error():
     with pytest.raises(UnsupportedFileError):
         extract_docx(b"this is definitely not a zip archive")
+
+
+def test_extract_pdf_no_text_error_carries_page_count():
+    import fitz
+
+    pdf = fitz.open()
+    for _ in range(3):
+        pdf.new_page()
+
+    with pytest.raises(NoExtractableTextError) as exc_info:
+        extract_pdf(pdf.tobytes())
+
+    assert exc_info.value.page_count == 3
