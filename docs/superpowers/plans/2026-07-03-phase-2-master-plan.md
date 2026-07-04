@@ -18,23 +18,23 @@ Phase 2 spans multiple independent subsystems. This master plan locks in the arc
 
 | # | Milestone | Covers | Depends on |
 |---|-----------|--------|-----------|
-| M1 | Conversation history & chat scope refactor | FR-8 (+ schema foundation for FR-3) | — |
+| M1 | Conversation history & chat scope refactor | FR-8 (+ schema foundation for FR-3) | none |
 | M2 | Multi-document RAG + AI settings | FR-3, FR-4 | M1 |
-| M3 | Additional document formats | FR-5 | — (parallel with M2 possible) |
+| M3 | Additional document formats | FR-5 | none (parallel with M2 possible) |
 | M4 | Stripe billing → usage limits → dashboard | FR-1, FR-2, FR-9 | M1 (dashboard reads conversations) |
-| M5 | Marketing site + CMS | FR-6, FR-7 | — (fully parallel track) |
+| M5 | Marketing site + CMS | FR-6, FR-7 | none (fully parallel track) |
 | M6 | Production deployment update | §12 | M1–M5 |
 
 **Existing decisions honored:** single-document chat (Phase 1) must remain working throughout; retrieval, storage, billing, CMS stay behind service abstractions (`app/services/*`) so providers can swap (§11 of the handover doc).
 
-**Out of scope (do not build):** everything in §9 of the handover doc — no teams, SSO, admin analytics, public APIs, OCR, CRM integrations.
+**Out of scope (do not build):** everything in §9 of the handover doc, no teams, SSO, admin analytics, public APIs, OCR, CRM integrations.
 
 ---
 
 ## Current state (verified against the repo)
 
 - **Backend** `backend/app/`: routes in `api/routes.py` (documents CRUD, per-document chat at `/api/documents/{id}/chat` + `/chat/stream` SSE), models in `models/` (`User`, `Document`, `DocumentChunk`, `Chat`, `Message`, `MessageSource`, `ProcessingJob`), services in `services/` (`chat.py`, `vector.py` with `VectorService.query_document`, `processing.py` with `PdfTextExtractor` + `chunk_pages` + `process_document`, `storage.py`), RQ worker in `worker/__init__.py`, settings in `core/config.py`.
-- **Chat is 1:1 with a document today:** `Chat.document_id` is NOT NULL, `get_or_create_chat(db, user, document)` returns the single chat per (user, document). `Message.document_id` NOT NULL. `MessageSource` already stores `document_id`, `page_start/end`, `excerpt`, `score`, `rank` — multi-source citations need scope, not a new citation model.
+- **Chat is 1:1 with a document today:** `Chat.document_id` is NOT NULL, `get_or_create_chat(db, user, document)` returns the single chat per (user, document). `Message.document_id` NOT NULL. `MessageSource` already stores `document_id`, `page_start/end`, `excerpt`, `score`, `rank`, multi-source citations need scope, not a new citation model.
 - **Vectors:** Pinecone, one namespace per env (`pinecone_namespace`), vector metadata written by `VectorService._metadata_for_chunk` (already includes document/user identifiers). `query_document` filters to a single document.
 - **Frontend** `frontend/src/`: routes in `App.tsx` (`/app` home, `/app/library`, `/app/documents/:id` workspace), API client in `api/client.ts` + `api/documents.ts`, Clerk auth in `features/auth/`, PDF viewer in `features/documents/`.
 - **Migrations:** Alembic, latest `20260630_0002_document_insights.py`.
@@ -65,7 +65,7 @@ usage_periods         id, user_id FK, period_start, period_end,
                       ai_messages_used int default 0, uploads_used int default 0
                       UNIQUE(user_id, period_start)
                       (storage is computed live: SUM(documents.file_size_bytes)
-                       WHERE deleted_at IS NULL — no counter to drift)
+                       WHERE deleted_at IS NULL, no counter to drift)
 
 chat_documents        chat_id FK (CASCADE), document_id FK (CASCADE),
                       position int, PK(chat_id, document_id)
@@ -83,11 +83,11 @@ documents             + format (String(16): "pdf"|"docx"|"pptx"|"txt"|"rtf",
 
 ---
 
-# M1 — Conversation history & chat scope refactor (FR-8)
+# M1: Conversation history & chat scope refactor (FR-8)
 
-**Outcome:** conversations are first-class: list, resume with full context, rename, delete. A chat's scope is a set of documents (size 1 for now — the UI stays single-doc until M2). Old per-document chat routes keep working as wrappers.
+**Outcome:** conversations are first-class: list, resume with full context, rename, delete. A chat's scope is a set of documents (size 1 for now, the UI stays single-doc until M2). Old per-document chat routes keep working as wrappers.
 
-### Task 1.1: Migration 0003 — chat scope + conversation fields
+### Task 1.1: Migration 0003: chat scope + conversation fields
 
 **Files:**
 - Create: `backend/alembic/versions/20260703_0003_chat_scope.py`
@@ -105,14 +105,14 @@ Tests (`backend/tests/test_chat_scope.py`): creating a chat with 1 doc populates
 ### Task 1.2: Chat CRUD service + routes
 
 **Files:**
-- Create: `backend/app/api/chat_routes.py` (new router, included from `app/main.py` — keeps `routes.py` from growing further)
+- Create: `backend/app/api/chat_routes.py` (new router, included from `app/main.py`, keeps `routes.py` from growing further)
 - Modify: `backend/app/services/chat.py` (scope-aware `get_or_create_chat` → `create_chat(db, user, documents)`, keep old signature delegating for Phase 1 routes)
 - Test: `backend/tests/test_conversations.py`
 
 Endpoints:
 ```
 GET    /api/chats                     list (cursor-paginated like documents:
-                                      reuse the encode/decode cursor helpers —
+                                      reuse the encode/decode cursor helpers;
                                       move them to app/api/pagination.py)
 POST   /api/chats                     {document_ids: [uuid], title?} -> 201
                                       422 if any doc not READY or not owned
@@ -133,7 +133,7 @@ Tests: create/list/rename/delete happy paths; 404 on other user's chat; resume r
 **Files:**
 - Modify: `backend/app/api/routes.py:361-380` (`/api/documents/{id}/chat` and `/chat/stream`)
 
-Both delegate: find-or-create the chat whose scope is exactly `[document]` (query `chat_documents` for single-membership chats), then reuse the M1.2 service functions. Existing tests in `backend/tests/test_chat.py` must pass unchanged — they are the regression net for "single-doc remains a special case".
+Both delegate: find-or-create the chat whose scope is exactly `[document]` (query `chat_documents` for single-membership chats), then reuse the M1.2 service functions. Existing tests in `backend/tests/test_chat.py` must pass unchanged, they are the regression net for "single-doc remains a special case".
 
 ### Task 1.4: Frontend conversation history UI
 
@@ -148,7 +148,7 @@ UI: list with title, scoped document names, updated_at; click → resume; inline
 
 ---
 
-# M2 — Multi-document RAG + advanced AI (FR-3, FR-4)
+# M2: Multi-document RAG + advanced AI (FR-3, FR-4)
 
 **Outcome:** a conversation scoped to N documents; retrieval pulls across all of them; answers attribute claims to document + page; model/settings configurable.
 
@@ -158,7 +158,7 @@ UI: list with title, scoped document names, updated_at; click → resume; inline
 - Modify: `backend/app/services/vector.py:313` (`query_document` → add `query_scope(self, user, documents: list[Document], question, top_k_per_query=8)`)
 - Test: `backend/tests/test_vector.py`
 
-Core change — Pinecone filter goes from one id to a set:
+Core change, Pinecone filter goes from one id to a set:
 
 ```python
 def query_scope(self, user: User, documents: list[Document], question: str) -> list[RetrievedSource]:
@@ -168,7 +168,7 @@ def query_scope(self, user: User, documents: list[Document], question: str) -> l
     ...existing embed + query + RetrievedSource assembly, keeping doc id per match...
 ```
 
-`query_document` becomes `return self.query_scope(user, [document], question)`. Verify existing vector metadata already contains `document_id`/`user_id` (see `_metadata_for_chunk`, `vector.py:452`); if any key differs, adapt the filter to the actual key names — do not re-index.
+`query_document` becomes `return self.query_scope(user, [document], question)`. Verify existing vector metadata already contains `document_id`/`user_id` (see `_metadata_for_chunk`, `vector.py:452`); if any key differs, adapt the filter to the actual key names, do not re-index.
 
 Fairness rule: after retrieval, if >1 document in scope, guarantee at least 1 chunk from each document that has any match above threshold before filling remaining slots by score (prevents one verbose doc drowning out the other in comparisons). Keep `MAX_CONTEXT_SOURCES` as the total cap.
 
@@ -180,7 +180,7 @@ Tests: fake Pinecone asserting the `$in` filter; fairness rule with skewed score
 - Modify: `backend/app/services/vector.py` (`format_source_context`, `stream_answer_tokens` system prompt), `backend/app/services/chat.py` (`stream_chat_response` accepts a document list; `_hydrate_source_context`, `_keyword_sources`, `_exact_reference_sources` take the scope list and union results)
 - Test: `backend/tests/test_chat.py` (new multi-doc cases)
 
-Context blocks get a source label: `[S3 · "contract-a.pdf" p.12-13]`. System prompt addition: "When the context contains multiple documents, attribute each claim to its document by name. For comparisons, state per-document findings before the comparison." `MessageSource` rows already carry `document_id`; the API response for sources adds `document_filename` (join in the serializer — no schema change).
+Context blocks get a source label: `[S3 · "contract-a.pdf" p.12-13]`. System prompt addition: "When the context contains multiple documents, attribute each claim to its document by name. For comparisons, state per-document findings before the comparison." `MessageSource` rows already carry `document_id`; the API response for sources adds `document_filename` (join in the serializer, no schema change).
 
 The insight/summary shortcuts in `chat.py` (`_cached_insight_answer`, `_overview_sources`, etc.) stay **single-doc only**: guard with `if len(scope) == 1`. Multi-doc overview questions go through normal retrieval. (`ponytail:` cross-doc insight synthesis deferred until a real user asks for it.)
 
@@ -199,8 +199,8 @@ Tests: two-doc chat returns sources from both documents with correct filenames; 
 - Modify: `backend/app/core/config.py`, `backend/app/services/vector.py`, `backend/app/api/chat_routes.py`
 - Test: `backend/tests/test_config.py`, `backend/tests/test_chat.py`
 
-Scope this deliberately small — most of FR-4 is already true (model, temperature, embedding dimensions, batch size, retries are env-configurable in `config.py`):
-1. Per-chat model override: `POST /api/chats` and the stream endpoint accept optional `model`; validated against `settings.openai_allowed_chat_models` (new setting, default `["gpt-4.1-mini", "gpt-4.1", "o4-mini"]`). Persist choice on the chat (`chats.model` nullable column — fold into migration 0003 or a tiny 0004).
+Scope this deliberately small, most of FR-4 is already true (model, temperature, embedding dimensions, batch size, retries are env-configurable in `config.py`):
+1. Per-chat model override: `POST /api/chats` and the stream endpoint accept optional `model`; validated against `settings.openai_allowed_chat_models` (new setting, default `["gpt-4.1-mini", "gpt-4.1", "o4-mini"]`). Persist choice on the chat (`chats.model` nullable column, fold into migration 0003 or a tiny 0004).
 2. New settings: `retrieval_top_k`, `openai_max_context_tokens` replace in-code constants (`MAX_CONTEXT_SOURCES` reads from settings).
 3. "Improved retrieval / larger documents / context management" is **measured, not rebuilt**: rerun the existing QA harness (`manual-testing/manual-api-regression.cjs`, baseline comparison report generator) on representative docs after M2 and record the report in `docs/`. Only tune if results regress.
 
@@ -208,7 +208,7 @@ Scope this deliberately small — most of FR-4 is already true (model, temperatu
 
 ---
 
-# M3 — Additional document formats: DOCX, PPTX, TXT, RTF (FR-5)
+# M3: Additional document formats: DOCX, PPTX, TXT, RTF (FR-5)
 
 **Outcome:** all four formats flow through the exact same pipeline (extract → `chunk_pages` → embed → index → chat) with clear processing errors.
 
@@ -233,7 +233,7 @@ Citations render "p.N" for PDF, "slide N" for PPTX, "section N" for the rest (fr
 - Test: `backend/tests/test_extractors.py` with tiny fixture files under `backend/tests/fixtures/`
 
 ```python
-# extractors.py — one function per format, all -> list[ExtractedPage]
+# extractors.py: one function per format, all -> list[ExtractedPage]
 EXTRACTORS: dict[str, Callable[[bytes], list[ExtractedPage]]] = {
     "pdf": ...,  # wraps existing PdfTextExtractor logic
     "docx": extract_docx,
@@ -251,20 +251,20 @@ Empty-text and corrupt-file cases raise the existing `NoExtractableTextError` / 
 - Modify: `backend/app/api/routes.py:160` (upload route: accept the four new content types + extension fallback, set `format`, reject others with the existing 415 pattern), `backend/app/models/document.py`
 - Test: `backend/tests/test_documents.py` (accept/reject matrix), `backend/tests/test_e2e_pipeline.py` (one non-PDF format end-to-end)
 
-Content-type map (browsers are inconsistent — trust extension when content type is generic `application/octet-stream`):
+Content-type map (browsers are inconsistent, trust extension when content type is generic `application/octet-stream`):
 `.docx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `.pptx` → `...presentationml.presentation`, `.txt` → `text/plain`, `.rtf` → `application/rtf`/`text/rtf`.
 
 ### Task 3.3: Frontend format support
 
 **Files:**
-- Modify: `frontend/src/features/upload/UploadDropzone.tsx` + `UploadHome.tsx` (accept list, copy), `frontend/src/features/documents/DocumentWorkspace.tsx` (non-PDF: swap PDF viewer pane for an extracted-text/preview placeholder — chat pane unchanged), citation labels ("slide"/"section"), `frontend/src/types.ts` (`format` field)
+- Modify: `frontend/src/features/upload/UploadDropzone.tsx` + `UploadHome.tsx` (accept list, copy), `frontend/src/features/documents/DocumentWorkspace.tsx` (non-PDF: swap PDF viewer pane for an extracted-text/preview placeholder, chat pane unchanged), citation labels ("slide"/"section"), `frontend/src/types.ts` (`format` field)
 - Test: Vitest for the accept list + label mapping
 
 **M3 DoD check (FR-5):** each format uploads, processes end-to-end, is chat-queryable with citations; corrupt files surface a clear FAILED status.
 
 ---
 
-# M4 — Stripe billing, usage limits, dashboard (FR-1, FR-2, FR-9)
+# M4: Stripe billing, usage limits, dashboard (FR-1, FR-2, FR-9)
 
 **Outcome:** subscribe/upgrade/downgrade/cancel via Stripe Checkout + Billing Portal; webhooks are the single source of truth for subscription state; limits enforced server-side; dashboard shows it all.
 
@@ -275,7 +275,7 @@ Content-type map (browsers are inconsistent — trust extension when content typ
 ### Task 4.1: Billing schema + plan seed
 
 **Files:**
-- Create: migration `backend/alembic/versions/20260703_0005_billing.py` (plans, subscriptions, usage_periods, `users.stripe_customer_id` — schema per the data-model section above; seed the three plan rows in the migration with `stripe_price_id` NULL, filled by env at runtime)
+- Create: migration `backend/alembic/versions/20260703_0005_billing.py` (plans, subscriptions, usage_periods, `users.stripe_customer_id`, schema per the data-model section above; seed the three plan rows in the migration with `stripe_price_id` NULL, filled by env at runtime)
 - Create: `backend/app/models/billing.py` (`Plan`, `Subscription`, `UsagePeriod`)
 - Modify: `backend/app/models/__init__.py`, `backend/app/core/config.py` (`stripe_secret_key`, `stripe_webhook_secret`, `stripe_price_pro_monthly`, `stripe_price_pro_yearly`), `backend/pyproject.toml` (add `stripe`)
 - Test: `backend/tests/test_billing_models.py`
@@ -284,7 +284,7 @@ Content-type map (browsers are inconsistent — trust extension when content typ
 
 **Files:**
 - Create: `backend/app/services/billing.py`, `backend/app/api/billing_routes.py`
-- Test: `backend/tests/test_billing.py` (Stripe SDK faked — same fake-service pattern as `conftest.py` uses for Pinecone/OpenAI)
+- Test: `backend/tests/test_billing.py` (Stripe SDK faked, same fake-service pattern as `conftest.py` uses for Pinecone/OpenAI)
 
 ```
 GET  /api/billing/plans      public plan matrix (name, interval, limits)
@@ -293,13 +293,13 @@ POST /api/billing/checkout   {plan_id} -> Stripe Checkout Session URL
                              (creates stripe customer on first use, stores id)
 POST /api/billing/portal     -> Billing Portal session URL (upgrades,
                              downgrades, cancels, payment methods, invoices
-                             all happen in the portal — build no custom UI
+                             all happen in the portal, build no custom UI
                              for proration; Stripe handles it)
 POST /api/webhooks/stripe    signature-verified (stripe.Webhook.construct_event),
                              raw-body route, no auth dependency
 ```
 
-Webhook handler — upsert `subscriptions` keyed on `stripe_subscription_id`, resolve plan by price id:
+Webhook handler, upsert `subscriptions` keyed on `stripe_subscription_id`, resolve plan by price id:
 - `checkout.session.completed` → link customer/subscription to user (client_reference_id = user id)
 - `customer.subscription.created|updated` → status, plan, period start/end, cancel_at_period_end
 - `customer.subscription.deleted` → status "canceled"
@@ -330,7 +330,7 @@ def check_storage(db, user, incoming_bytes: int) -> None:
 def check_scope_size(plan, document_ids) -> None      # multi-doc gate
 def check_model_allowed(plan, model) -> None          # premium model gate
 ```
-`LimitExceeded` maps to HTTP 402 with `{"code": "limit_exceeded", "kind": ..., "limit": ..., "used": ...}` via an exception handler in `main.py`. Enforcement points: upload (uploads + storage), chat stream (ai_message — increment when the user message persists, before the OpenAI call), chat create (scope size, model). Limits reset naturally because the period row is keyed by period start — no cron needed.
+`LimitExceeded` maps to HTTP 402 with `{"code": "limit_exceeded", "kind": ..., "limit": ..., "used": ...}` via an exception handler in `main.py`. Enforcement points: upload (uploads + storage), chat stream (ai_message, increment when the user message persists, before the OpenAI call), chat create (scope size, model). Limits reset naturally because the period row is keyed by period start, no cron needed.
 
 `GET /api/usage` → `{plan, period_start, period_end, ai_messages: {used, limit}, uploads: {used, limit}, storage_mb: {used, limit}}`.
 
@@ -346,7 +346,7 @@ Tests: limit hit returns 402 and does not call OpenAI (assert on the fake); peri
 ### Task 4.5: Enhanced dashboard (FR-9)
 
 **Files:**
-- Create: `backend/app/api/dashboard_routes.py` (`GET /api/dashboard` — one endpoint, one round trip: subscription summary, usage (reuse usage service), document stats (count by status/format, total storage), 5 most recent conversations, 10 recent activity items derived from documents.created_at + chats.updated_at — no separate activity table), `frontend/src/features/dashboard/DashboardPage.tsx`, `frontend/src/api/dashboard.ts`
+- Create: `backend/app/api/dashboard_routes.py` (`GET /api/dashboard`, one endpoint, one round trip: subscription summary, usage (reuse usage service), document stats (count by status/format, total storage), 5 most recent conversations, 10 recent activity items derived from documents.created_at + chats.updated_at, no separate activity table), `frontend/src/features/dashboard/DashboardPage.tsx`, `frontend/src/api/dashboard.ts`
 - Modify: `frontend/src/App.tsx` (`/app` home becomes the dashboard; current upload home moves to the top of it)
 - Test: `backend/tests/test_dashboard.py`, Vitest render test
 
@@ -354,7 +354,7 @@ Tests: limit hit returns 402 and does not call OpenAI (assert on the fake); peri
 
 ---
 
-# M5 — Marketing website + headless CMS (FR-6, FR-7) — parallel track
+# M5: Marketing website + headless CMS (FR-6, FR-7), parallel track
 
 **Outcome:** responsive, SEO-friendly marketing site, all content CMS-managed, edits live without redeploy.
 
@@ -369,11 +369,11 @@ Content types: `page` (slug, title, SEO fields, ordered rich sections), `landing
 
 ### Task 5.2: Site scaffold + CMS client
 
-**Files:** `marketing/` — Next.js + Tailwind scaffold, `src/lib/cms.ts` (typed fetchers, `revalidateTag`-based caching), `src/app/api/revalidate/route.ts` (Contentful webhook → revalidate), env `CMS_SPACE_ID`, `CMS_DELIVERY_TOKEN`, `REVALIDATE_SECRET`.
+**Files:** `marketing/`, Next.js + Tailwind scaffold, `src/lib/cms.ts` (typed fetchers, `revalidateTag`-based caching), `src/app/api/revalidate/route.ts` (Contentful webhook → revalidate), env `CMS_SPACE_ID`, `CMS_DELIVERY_TOKEN`, `REVALIDATE_SECRET`.
 
 ### Task 5.3: Pages
 
-Landing, Services, About, Blog (list + `[slug]`), Contact (form → API route → email via provider client already chosen for the project, plus store submission in Contentful or a simple table — pick email-only first), FAQ, Privacy, Terms, Refund. All content from CMS; component per section type.
+Landing, Services, About, Blog (list + `[slug]`), Contact (form → API route → email via provider client already chosen for the project, plus store submission in Contentful or a simple table, pick email-only first), FAQ, Privacy, Terms, Refund. All content from CMS; component per section type.
 
 ### Task 5.4: SEO + quality gate
 
@@ -383,7 +383,7 @@ Landing, Services, About, Blog (list + `[slug]`), Contact (form → API route �
 
 ---
 
-# M6 — Production deployment update
+# M6: Production deployment update
 
 **Outcome:** everything above running in production with monitoring & logging.
 
@@ -411,8 +411,8 @@ Landing, Services, About, Blog (list + `[slug]`), Contact (form → API route �
 
 ## Deliberate simplifications (flag to client if unwanted)
 
-- No custom upgrade/downgrade UI — Stripe Billing Portal does proration, plan switches, cancellation, invoices (FR-1 explicitly includes portal integration).
-- No `collections` tables — chat scope over N documents covers all stated use cases.
+- No custom upgrade/downgrade UI, Stripe Billing Portal does proration, plan switches, cancellation, invoices (FR-1 explicitly includes portal integration).
+- No `collections` tables, chat scope over N documents covers all stated use cases.
 - Storage usage computed from `documents` sum, not a counter (can't drift).
 - Recent activity derived from existing timestamps, no event/audit table (§9 excludes audit logging anyway).
 - DOCX/TXT/RTF "pages" are word-count sections; real DOCX pagination requires a renderer and isn't needed for citations to be useful.
