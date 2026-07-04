@@ -4,10 +4,13 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.billing_routes import router as billing_router
 from app.api.chat_routes import router as chat_router
+from app.api.dashboard_routes import router as dashboard_router
 from app.api.routes import router
 from app.core.config import Settings
 from app.core.logging import configure_logging
+from app.services.usage import LimitExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +39,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
+    @app.exception_handler(LimitExceeded)
+    async def limit_exceeded_handler(request: Request, exc: LimitExceeded) -> JSONResponse:
+        return JSONResponse(
+            status_code=402,
+            content={"code": "limit_exceeded", "kind": exc.kind, "limit": exc.limit, "used": exc.used},
+        )
+
     app.include_router(router)
     app.include_router(chat_router)
+    app.include_router(billing_router)
+    app.include_router(dashboard_router)
     return app
 
 

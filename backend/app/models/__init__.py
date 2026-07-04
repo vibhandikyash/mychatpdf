@@ -1,3 +1,4 @@
+from app.models.billing import Plan, Subscription, UsagePeriod
 from app.models.chat import Chat, ChatDocument, Message, MessageRole, MessageSource, MessageStatus
 from app.models.document import Document, DocumentChunk, DocumentStatus
 from app.models.processing import ProcessingJob, ProcessingJobStatus
@@ -13,7 +14,10 @@ __all__ = [
     "MessageRole",
     "MessageSource",
     "MessageStatus",
+    "Plan",
     "ProcessingJob",
     "ProcessingJobStatus",
+    "Subscription",
+    "UsagePeriod",
     "User",
 ]

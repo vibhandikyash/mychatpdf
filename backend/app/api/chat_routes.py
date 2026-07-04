@@ -11,7 +11,9 @@ from app.api.pagination import decode_cursor, encode_cursor
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.models import Chat, Document, DocumentStatus, Message, User
+from app.services.billing import get_active_plan
 from app.services.chat import create_chat, stream_chat_response
+from app.services.usage import check_model_allowed, check_scope_size
 from app.services.vector import get_vector_service
 
 router = APIRouter()
@@ -35,6 +37,7 @@ def message_payload(message: Message) -> dict[str, object]:
             {
                 "source_id": str(source.id),
                 "chunk_id": str(source.chunk_id) if source.chunk_id else None,
+                "document_id": str(source.document_id),
                 "document_filename": source.document.original_filename,
                 "page_start": source.page_start,
                 "page_end": source.page_end,
@@ -122,6 +125,10 @@ def create_chat_route(
         document_ids = list(dict.fromkeys(UUID(str(raw_id)) for raw_id in raw_document_ids))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="document_ids must contain valid UUIDs") from exc
+
+    plan = get_active_plan(db, current_user)
+    check_model_allowed(plan, model)
+    check_scope_size(plan, document_ids)
 
     documents: list[Document] = []
     for document_id in document_ids:

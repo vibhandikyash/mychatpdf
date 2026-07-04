@@ -21,6 +21,7 @@ from app.models import (
     User,
 )
 from app.models.mixins import utc_now
+from app.services.usage import check_and_increment
 from app.services.vector import (
     DOCUMENT_INTELLIGENCE_SOURCE_LIMIT,
     DOCUMENT_INTELLIGENCE_VERSION,
@@ -464,8 +465,13 @@ def stream_chat_response(
 ) -> Iterator[str]:
     scope = documents if isinstance(documents, list) else [documents]
     if any(document.status != DocumentStatus.READY for document in scope):
-        yield format_sse("error", {"message": "Document is not ready for chat"})
-        return
+        return iter([format_sse("error", {"message": "Document is not ready for chat"})])
+
+    # Shared enforcement point for both the /api/chats stream and the legacy
+    # per-document stream. This runs eagerly (before the response starts
+    # streaming), so LimitExceeded surfaces as an HTTP 402 rather than a
+    # mid-stream error, and it runs before the OpenAI call.
+    check_and_increment(db, user, "ai_message")
 
     if chat is None:
         chat = get_or_create_chat(db, user, scope[0])
@@ -502,6 +508,22 @@ def stream_chat_response(
     db.commit()
     db.refresh(assistant_message)
 
+    return _generate_chat_response(
+        db, user, scope, single_document, chat, assistant_message, content, contextual_question, vector_service
+    )
+
+
+def _generate_chat_response(
+    db: Session,
+    user: User,
+    scope: list[Document],
+    single_document: Document | None,
+    chat: Chat,
+    assistant_message: Message,
+    content: str,
+    contextual_question: str,
+    vector_service: VectorService,
+) -> Iterator[str]:
     answer_parts: list[str] = []
     sources: list[RetrievedSource] = []
     yield format_sse("message_start", {"message_id": str(assistant_message.id)})

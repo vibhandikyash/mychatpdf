@@ -25,6 +25,7 @@ interface BackendChatDetail {
     sources: Array<{
       source_id: string;
       chunk_id: string | null;
+      document_id?: string;
       document_filename: string;
       page_start: number;
       page_end: number;
@@ -67,6 +68,7 @@ function mapChatMessage(message: BackendChatDetail["messages"][number]): ChatMes
     sources: message.sources.map((source) => ({
       sourceId: source.source_id,
       chunkId: source.chunk_id ?? "",
+      documentId: source.document_id,
       documentFilename: source.document_filename,
       pageStart: source.page_start,
       pageEnd: source.page_end,

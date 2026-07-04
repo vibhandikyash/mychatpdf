@@ -23,6 +23,7 @@ from app.models import (
 from app.models.mixins import utc_now
 from app.services.chat import get_or_create_chat, stream_chat_response
 from app.services.storage import StorageService, build_document_object_key, get_storage_service
+from app.services.usage import check_and_increment, check_storage
 from app.services.vector import VectorService, get_vector_service
 from app.worker import enqueue_document_processing
 
@@ -180,6 +181,11 @@ async def upload_document(
 
     document_format, content_type = _resolve_upload_format(file)
     content = await _read_upload(file, max_bytes)
+
+    # Plan limits before any document row exists; the increment only becomes
+    # durable at the final commit, so a failed upload does not consume quota.
+    check_and_increment(db, current_user, "upload")
+    check_storage(db, current_user, len(content))
 
     document = Document(
         user_id=current_user.id,

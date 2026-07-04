@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     openai_chat_temperature: float | None = Field(default=None, ge=0, le=2)
     openai_allowed_chat_models: str = "gpt-4.1-mini,gpt-4.1,o4-mini"
 
+    stripe_secret_key: str | None = None
+    stripe_webhook_secret: str | None = None
+    stripe_price_pro_monthly: str | None = None
+    stripe_price_pro_yearly: str | None = None
+    billing_return_url: str | None = None
+
     pinecone_api_key: str | None = None
     pinecone_index_name: str = "mychatpdf"
     pinecone_namespace: str = "local"

@@ -26,6 +26,8 @@ from app.core.config import Settings, get_settings  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.db.session import get_db  # noqa: E402
 from app.main import create_app  # noqa: E402
+from app.models import Plan  # noqa: E402
+from app.services.billing import PLAN_SEEDS  # noqa: E402
 
 
 @pytest.fixture
@@ -44,6 +46,10 @@ def db_session() -> Generator[Session, None, None]:
     Base.metadata.create_all(bind=engine)
 
     with TestingSessionLocal() as session:
+        # The billing migration seeds the plan rows; create_all does not, so
+        # mirror it here from the same single source of truth.
+        session.add_all([Plan(**seed) for seed in PLAN_SEEDS])
+        session.commit()
         yield session
 
     Base.metadata.drop_all(bind=engine)

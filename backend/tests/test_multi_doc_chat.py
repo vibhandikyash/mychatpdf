@@ -132,16 +132,17 @@ def test_create_chat_with_allowed_model_persists_it(authenticated_client, db_ses
     db_session.add(document)
     db_session.commit()
 
+    # gpt-4.1-mini is in both the settings allowlist and the free plan's models.
     response = authenticated_client.post(
         "/api/chats",
-        json={"document_ids": [str(document.id)], "model": "o4-mini"},
+        json={"document_ids": [str(document.id)], "model": "gpt-4.1-mini"},
     )
 
     assert response.status_code == 201
     body = response.json()
-    assert body["model"] == "o4-mini"
+    assert body["model"] == "gpt-4.1-mini"
     chat = db_session.get(Chat, UUID(body["id"]))
-    assert chat.model == "o4-mini"
+    assert chat.model == "gpt-4.1-mini"
 
 
 def test_create_chat_rejects_disallowed_model(authenticated_client, db_session):
