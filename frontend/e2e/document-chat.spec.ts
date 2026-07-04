@@ -32,7 +32,7 @@ test("user uploads a PDF, asks a question, opens a citation, and refreshes chat 
   await mockApi(page);
 
   await page.goto("/app");
-  await expect(page.getByRole("heading", { name: "Start with a PDF" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Chat with any document" })).toBeVisible();
 
   await page.locator("#pdf-upload").setInputFiles({
     name: "pipeline-notes.pdf",
@@ -48,7 +48,7 @@ test("user uploads a PDF, asks a question, opens a citation, and refreshes chat 
   await page.getByRole("button", { name: "Send message" }).click();
 
   await expect(page.getByText("What improved?")).toBeVisible();
-  await expect(page.getByText("Pipeline quality improved in regulated industries.").first()).toBeVisible();
+  await expect(page.getByText("Pipeline quality improved in regulated industries").first()).toBeVisible();
 
   await page.getByRole("button", { name: "Open page 2 in PDF" }).click();
   await expect(page.getByText("Page 2 of 3")).toBeVisible();
@@ -56,7 +56,7 @@ test("user uploads a PDF, asks a question, opens a citation, and refreshes chat 
   await page.reload();
   await expect(page.getByText("Ready to chat")).toBeVisible();
   await expect(page.getByText("What improved?")).toBeVisible();
-  await expect(page.getByText("Pipeline quality improved in regulated industries.").first()).toBeVisible();
+  await expect(page.getByText("Pipeline quality improved in regulated industries").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Open page 2 in PDF" })).toBeVisible();
 });
 
@@ -98,7 +98,7 @@ test("shows an error when the chat stream returns an error event", async ({ page
   await page.getByRole("button", { name: "Send message" }).click();
 
   await expect(page.getByText("What improved?")).toBeVisible();
-  await expect(page.getByText("Unable to send this message right now.")).toBeVisible();
+  await expect(page.getByText("Unable to generate an answer right now.")).toBeVisible();
 });
 
 async function mockApi(
@@ -121,6 +121,11 @@ async function mockApi(
     const request = route.request();
     const url = new URL(request.url());
     const method = request.method();
+
+    if (!url.pathname.startsWith("/api/")) {
+      await route.fallback();
+      return;
+    }
 
     if (method === "OPTIONS") {
       await route.fulfill({ status: 204, headers: corsHeaders() });
@@ -168,9 +173,14 @@ async function mockApi(
       return;
     }
 
+    if (method === "GET" && url.pathname === `/api/documents/${documentId}/file`) {
+      await route.fallback();
+      return;
+    }
+
     if (method === "GET" && url.pathname === `/api/documents/${documentId}/file-url`) {
       await fulfillJson(route, {
-        url: "about:blank",
+        url: `${appOrigin}/e2e-fixture.pdf`,
         expires_at: "2026-06-15T12:00:00Z"
       });
       return;
@@ -282,3 +292,4 @@ function corsHeaders() {
     "access-control-allow-methods": "GET,POST,DELETE,OPTIONS"
   };
 }
+

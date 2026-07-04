@@ -13,12 +13,12 @@ export default defineConfig({
     trace: "on-first-retry"
   },
   webServer: {
-    command: `npm run dev -- --host ${e2eHost}`,
+    command: `node e2e/write-fixture.mjs && npm run dev -- --host ${e2eHost}`,
     url: e2eBaseUrl,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     env: {
-      VITE_API_BASE_URL: process.env.E2E_API_BASE_URL ?? "/api",
+      VITE_API_BASE_URL: process.env.E2E_API_BASE_URL ?? "",
       VITE_E2E_AUTH_BYPASS: "true"
     }
   },
