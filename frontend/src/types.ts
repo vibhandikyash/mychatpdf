@@ -61,3 +61,57 @@ export interface WorkspaceDocument extends DocumentSummary {
   signedPdfUrl?: string;
   pdfHttpHeaders?: Record<string, string>;
 }
+
+export type PlanInterval = "month" | "year" | null;
+
+export interface BillingPlan {
+  id: string;
+  name: string;
+  interval: PlanInterval;
+  limitAiMessages: number;
+  limitUploads: number;
+  limitStorageMb: number;
+  limitDocumentScope: number;
+  allowedChatModels: string[];
+}
+
+export interface SubscriptionSummary {
+  plan: { id: string; name: string; interval: PlanInterval };
+  status: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+}
+
+export interface UsageQuota {
+  used: number;
+  limit: number;
+}
+
+export interface UsageSummary {
+  plan: { id: string; name: string };
+  periodStart: string;
+  periodEnd: string;
+  aiMessages: UsageQuota;
+  uploads: UsageQuota;
+  storageMb: UsageQuota;
+}
+
+export interface ActivityItem {
+  type: string;
+  id: string;
+  label: string;
+  timestamp: string;
+}
+
+export interface DashboardData {
+  subscription: SubscriptionSummary;
+  usage: UsageSummary;
+  documents: {
+    total: number;
+    byStatus: Record<string, number>;
+    byFormat: Record<string, number>;
+    storageBytes: number;
+  };
+  recentConversations: ChatSummary[];
+  recentActivity: ActivityItem[];
+}
