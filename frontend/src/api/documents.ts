@@ -95,6 +95,8 @@ function mapCitation(source: BackendChatResponse["messages"][number]["sources"][
 
 function mapStreamCitation(source: {
   chunk_id: string;
+  document_id?: string | null;
+  document_filename?: string | null;
   page_start: number;
   page_end: number;
   excerpt: string;
@@ -103,6 +105,8 @@ function mapStreamCitation(source: {
   return {
     sourceId: `${source.chunk_id}-${index}`,
     chunkId: source.chunk_id,
+    documentId: source.document_id ?? undefined,
+    documentFilename: source.document_filename ?? undefined,
     pageStart: source.page_start,
     pageEnd: source.page_end,
     excerpt: source.excerpt,
@@ -212,6 +216,8 @@ function mapStreamSources(sourceItems: unknown): Citation[] {
     mapStreamCitation(
       source as {
         chunk_id: string;
+        document_id?: string | null;
+        document_filename?: string | null;
         page_start: number;
         page_end: number;
         excerpt: string;

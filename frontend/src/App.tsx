@@ -21,11 +21,12 @@ import {
   sendChatMessage,
   uploadDocument
 } from "./api/documents";
-import { deleteChat, getChat, listChats, renameChat, streamChatMessage } from "./api/chats";
+import { createChat, deleteChat, getChat, listChats, renameChat, streamChatMessage } from "./api/chats";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";
 import { BrandLockup } from "./features/brand/Brand";
 import { ChatHistory } from "./features/chats/ChatHistory";
 import { ChatView } from "./features/chats/ChatView";
+import { ScopePicker } from "./features/chats/ScopePicker";
 import { DocumentLibrary } from "./features/documents/DocumentLibrary";
 import { DocumentWorkspace } from "./features/documents/DocumentWorkspace";
 import { UploadHome } from "./features/upload/UploadHome";
@@ -92,6 +93,16 @@ export function App() {
           <RequireAuth>
             <AppShell>
               <ChatsRoute />
+            </AppShell>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/app/chats/new"
+        element={
+          <RequireAuth>
+            <AppShell>
+              <NewChatRoute />
             </AppShell>
           </RequireAuth>
         }
@@ -526,6 +537,7 @@ function ChatsRoute() {
       chats={chats}
       hasMore={Boolean(nextCursor)}
       isLoadingMore={isLoadingMore}
+      onNew={() => navigate("/app/chats/new")}
       onOpen={(chat) =>
         navigate(chat.documents.length === 1 ? `/app/documents/${chat.documents[0].id}` : `/app/chats/${chat.id}`)
       }
@@ -546,6 +558,69 @@ function ChatsRoute() {
       }}
       onLoadMore={() => void loadMore()}
     />
+  );
+}
+
+function NewChatRoute() {
+  const navigate = useNavigate();
+  const api = useAuthenticatedApiClient();
+  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    let cancelled = false;
+    void listDocuments(api)
+      .then((nextDocuments) => {
+        if (!cancelled) {
+          setDocuments(nextDocuments.filter((document) => document.status === "ready"));
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  async function handleCreate(documentIds: string[], title?: string) {
+    if (!api || isCreating) {
+      return;
+    }
+
+    setIsCreating(true);
+    setErrorMessage(null);
+    try {
+      const chat = await createChat(api, documentIds, title);
+      navigate(`/app/chats/${chat.id}`);
+    } catch {
+      setErrorMessage("Unable to start this conversation right now.");
+      setIsCreating(false);
+    }
+  }
+
+  return (
+    <>
+      {errorMessage ? (
+        <div className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">{errorMessage}</div>
+      ) : null}
+      <ScopePicker
+        documents={documents}
+        isLoading={isLoading}
+        isCreating={isCreating}
+        onCreate={(documentIds, title) => void handleCreate(documentIds, title)}
+      />
+    </>
   );
 }
 

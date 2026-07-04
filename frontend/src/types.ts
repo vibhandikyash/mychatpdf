@@ -31,12 +31,14 @@ export interface Citation {
   pageEnd: number;
   excerpt: string;
   score?: number;
+  documentId?: string;
   documentFilename?: string;
 }
 
 export interface ChatDocumentRef {
   id: string;
   originalFilename: string;
+  format?: DocumentFormat;
 }
 
 export interface ChatSummary {

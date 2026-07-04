@@ -1,5 +1,5 @@
 import { KeyboardEvent, useRef, useState } from "react";
-import { Loader2, MessagesSquare, Pencil, Trash2 } from "lucide-react";
+import { Loader2, MessagesSquare, Pencil, Plus, Trash2 } from "lucide-react";
 import { ChatSummary } from "../../types";
 import { formatDate } from "../documents/status";
 
@@ -11,13 +11,14 @@ interface ChatHistoryProps {
   onRename?: (chatId: string, title: string) => void;
   onDelete?: (chatId: string) => void;
   onLoadMore?: () => void;
+  onNew?: () => void;
 }
 
 export function chatTitle(chat: ChatSummary) {
   return chat.title?.trim() ? chat.title : "Untitled conversation";
 }
 
-export function ChatHistory({ chats, hasMore = false, isLoadingMore = false, onOpen, onRename, onDelete, onLoadMore }: ChatHistoryProps) {
+export function ChatHistory({ chats, hasMore = false, isLoadingMore = false, onOpen, onRename, onDelete, onLoadMore, onNew }: ChatHistoryProps) {
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
@@ -61,18 +62,38 @@ export function ChatHistory({ chats, hasMore = false, isLoadingMore = false, onO
 
   return (
     <section className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.14em] text-sea">History</p>
           <h1 className="text-3xl font-semibold text-ink">Conversations</h1>
+          <p className="mt-1 text-sm text-slate-600">Pick up any conversation where you left off.</p>
         </div>
-        <p className="text-sm text-slate-600">Pick up any conversation where you left off.</p>
+        {onNew ? (
+          <button
+            type="button"
+            onClick={onNew}
+            className="brand-gradient inline-flex min-h-11 shrink-0 items-center gap-2 rounded-md px-4 text-sm font-semibold text-white shadow-sm hover:shadow-[0_12px_24px_rgba(32,104,248,0.22)]"
+          >
+            <Plus size={17} aria-hidden="true" />
+            New conversation
+          </button>
+        ) : null}
       </div>
 
       {chats.length === 0 ? (
         <div className="brand-soft-surface rounded-lg border border-dashed border-teal-200 p-8 text-center shadow-panel">
           <h2 className="text-xl font-semibold text-ink">No conversations yet</h2>
-          <p className="mt-2 text-sm text-slate-600">Open a document and start asking questions. Your conversations will show up here.</p>
+          <p className="mt-2 text-sm text-slate-600">Start a conversation across one or more documents, or open a document and ask questions.</p>
+          {onNew ? (
+            <button
+              type="button"
+              onClick={onNew}
+              className="brand-gradient mt-4 inline-flex min-h-11 items-center gap-2 rounded-md px-4 text-sm font-semibold text-white shadow-sm hover:shadow-[0_12px_24px_rgba(32,104,248,0.22)]"
+            >
+              <Plus size={17} aria-hidden="true" />
+              New conversation
+            </button>
+          ) : null}
         </div>
       ) : (
         <div className="overflow-hidden rounded-lg border border-teal-100 bg-white shadow-panel">

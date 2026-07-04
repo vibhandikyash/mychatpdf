@@ -1,11 +1,11 @@
 import { ApiClient } from "./client";
 import { SendChatMessageHandlers, streamAssistantMessage } from "./documents";
-import { ChatMessage, ChatSummary } from "../types";
+import { ChatMessage, ChatSummary, DocumentFormat } from "../types";
 
 interface BackendChatSummary {
   id: string;
   title: string | null;
-  documents: Array<{ id: string; original_filename: string }>;
+  documents: Array<{ id: string; original_filename: string; format?: DocumentFormat | null }>;
   created_at: string;
   updated_at: string;
 }
@@ -50,7 +50,8 @@ export function mapChatSummary(chat: BackendChatSummary): ChatSummary {
     title: chat.title,
     documents: chat.documents.map((document) => ({
       id: document.id,
-      originalFilename: document.original_filename
+      originalFilename: document.original_filename,
+      format: document.format ?? "pdf"
     })),
     createdAt: chat.created_at,
     updatedAt: chat.updated_at

@@ -5,7 +5,7 @@ import { createChat, deleteChat, getChat, listChats, mapChatSummary, renameChat,
 const backendChat = {
   id: "chat-1",
   title: "Quarterly numbers",
-  documents: [{ id: "doc-1", original_filename: "paper.pdf" }],
+  documents: [{ id: "doc-1", original_filename: "paper.pdf", format: "pdf" as const }],
   created_at: "2026-07-01T00:00:00Z",
   updated_at: "2026-07-02T00:00:00Z"
 };
@@ -15,7 +15,7 @@ describe("chat API helpers", () => {
     expect(mapChatSummary(backendChat)).toEqual({
       id: "chat-1",
       title: "Quarterly numbers",
-      documents: [{ id: "doc-1", originalFilename: "paper.pdf" }],
+      documents: [{ id: "doc-1", originalFilename: "paper.pdf", format: "pdf" }],
       createdAt: "2026-07-01T00:00:00Z",
       updatedAt: "2026-07-02T00:00:00Z"
     });
