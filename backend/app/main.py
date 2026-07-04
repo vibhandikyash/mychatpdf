@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or Settings()
     configure_logging(app_settings.log_level)
+    if app_settings.sentry_dsn:
+        import sentry_sdk
+
+        sentry_sdk.init(dsn=app_settings.sentry_dsn, traces_sample_rate=0.1)
     app = FastAPI(title="MyPDFChat API", version="0.1.0")
     app.state.settings = app_settings
 

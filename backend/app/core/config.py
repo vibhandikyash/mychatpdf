@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     retrieval_top_k: int = Field(default=8, ge=1)
     max_context_sources: int = Field(default=8, ge=1)
 
+    sentry_dsn: str | None = None
+
     max_upload_mb: int = Field(default=20, ge=1)
     max_pdf_pages: int = Field(default=300, ge=1)
     redis_url: str = "redis://redis:6379/0"
