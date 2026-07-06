@@ -1,6 +1,7 @@
 import { expect, Page, Route, test } from "@playwright/test";
 
-const fallbackAppUrl = `http://${process.env.E2E_HOST ?? "0.0.0.0"}:${process.env.E2E_PORT ?? "5173"}`;
+const e2eHost = process.env.E2E_HOST ?? "0.0.0.0";
+const fallbackAppUrl = `http://${e2eHost === "0.0.0.0" ? "localhost" : e2eHost}:${process.env.E2E_PORT ?? "5173"}`;
 const apiRoutePattern = process.env.E2E_API_ROUTE_PATTERN ?? "**/api/**";
 const appOrigin = new URL(process.env.E2E_BASE_URL ?? fallbackAppUrl).origin;
 const documentId = "doc-e2e-ready";

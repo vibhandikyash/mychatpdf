@@ -1,5 +1,8 @@
 from uuid import UUID
 
+import pytest
+
+from app.core.config import Settings
 from app.models import (
     Chat,
     Document,
@@ -160,6 +163,175 @@ def test_create_chat_rejects_disallowed_model(authenticated_client, db_session):
 
     assert response.status_code == 422
     assert response.json()["detail"] == "Model is not allowed"
+
+
+def test_create_chat_accepts_fast_tier(authenticated_client, db_session):
+    user = _authenticated_user(db_session)
+    document = _ready_document(user, "paper.pdf")
+    db_session.add(document)
+    db_session.commit()
+
+    # "fast" resolves to gpt-4.1-mini by default, which the free plan allows.
+    response = authenticated_client.post(
+        "/api/chats",
+        json={"document_ids": [str(document.id)], "model": "fast"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["model"] == "fast"
+    assert db_session.get(Chat, UUID(body["id"])).model == "fast"
+
+
+def test_create_chat_accepts_quality_tier_on_pro_plan(authenticated_client, db_session):
+    user = _authenticated_user(db_session)
+    document = _ready_document(user, "paper.pdf")
+    db_session.add_all(
+        [
+            document,
+            Subscription(
+                user_id=user.id,
+                plan_id="pro_monthly",
+                stripe_subscription_id="sub_123",
+                status="active",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = authenticated_client.post(
+        "/api/chats",
+        json={"document_ids": [str(document.id)], "model": "quality"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["model"] == "quality"
+
+
+class _ModelRecordingVectorService:
+    def __init__(self):
+        self.model = "unset"
+
+    def query_document(self, _user, _document, _question):
+        return []
+
+    def stream_answer_tokens(self, _question, _sources, model=None):
+        self.model = model
+        yield "ok"
+
+
+@pytest.mark.parametrize(
+    ("tier", "expected_model"),
+    [("fast", "model-fast-x"), ("quality", "model-quality-x")],
+)
+def test_stream_resolves_tier_to_configured_model(db_session, tier, expected_model):
+    user = _authenticated_user(db_session)
+    document = _ready_document(user, "paper.pdf")
+    # Pro plan: no model allowlist, so gating passes for any resolved model.
+    db_session.add_all(
+        [
+            document,
+            Subscription(
+                user_id=user.id,
+                plan_id="pro_monthly",
+                stripe_subscription_id="sub_123",
+                status="active",
+            ),
+        ]
+    )
+    db_session.commit()
+    chat = create_chat(db_session, user, [document], model=tier)
+    settings = Settings(
+        _env_file=None, openai_fast_model="model-fast-x", openai_quality_model="model-quality-x"
+    )
+    vector_service = _ModelRecordingVectorService()
+
+    list(
+        stream_chat_response(
+            db_session,
+            user,
+            [document],
+            "What is the notice period?",
+            vector_service,
+            chat=chat,
+            settings=settings,
+        )
+    )
+
+    assert vector_service.model == expected_model
+
+
+def test_stream_model_in_body_switches_and_persists_tier(authenticated_client, db_session, monkeypatch):
+    user = _authenticated_user(db_session)
+    document = _ready_document(user, "paper.pdf")
+    db_session.add_all(
+        [
+            document,
+            Subscription(
+                user_id=user.id,
+                plan_id="pro_monthly",
+                stripe_subscription_id="sub_123",
+                status="active",
+            ),
+        ]
+    )
+    db_session.commit()
+    chat = create_chat(db_session, user, [document], model="fast")
+    vector_service = _ModelRecordingVectorService()
+    monkeypatch.setattr("app.api.chat_routes.get_vector_service", lambda _settings: vector_service)
+
+    with authenticated_client.stream(
+        "POST",
+        f"/api/chats/{chat.id}/messages/stream",
+        json={"content": "Go deeper.", "model": "quality"},
+    ) as response:
+        response.read()
+
+    assert response.status_code == 200
+    # Conftest settings use the defaults: quality resolves to gpt-4.1.
+    assert vector_service.model == "gpt-4.1"
+    db_session.refresh(chat)
+    assert chat.model == "quality"
+
+
+def test_stream_rejects_junk_model_in_body(authenticated_client, db_session, monkeypatch):
+    user = _authenticated_user(db_session)
+    document = _ready_document(user, "paper.pdf")
+    db_session.add(document)
+    db_session.commit()
+    chat = create_chat(db_session, user, [document])
+    vector_service = _ModelRecordingVectorService()
+    monkeypatch.setattr("app.api.chat_routes.get_vector_service", lambda _settings: vector_service)
+
+    response = authenticated_client.post(
+        f"/api/chats/{chat.id}/messages/stream",
+        json={"content": "Hello?", "model": "gpt-junk"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Model is not allowed"
+    assert vector_service.model == "unset"
+
+
+def test_legacy_stream_accepts_tier_and_persists_it(authenticated_client, db_session, monkeypatch):
+    user = _authenticated_user(db_session)
+    document = _ready_document(user, "paper.pdf")
+    db_session.add(document)
+    db_session.commit()
+    vector_service = _ModelRecordingVectorService()
+    monkeypatch.setattr("app.api.routes.get_vector_service", lambda _settings: vector_service)
+
+    with authenticated_client.stream(
+        "POST",
+        f"/api/documents/{document.id}/chat/stream",
+        json={"content": "Summarize the notice terms.", "model": "fast"},
+    ) as response:
+        response.read()
+
+    assert response.status_code == 200
+    assert vector_service.model == "gpt-4.1-mini"
+    chat = db_session.query(Chat).filter_by(document_id=document.id).one()
+    assert chat.model == "fast"
 
 
 def test_stream_uses_chat_model_override(db_session):

@@ -5,6 +5,7 @@ import { ChatMessage, ChatSummary, DocumentFormat } from "../types";
 interface BackendChatSummary {
   id: string;
   title: string | null;
+  model?: string | null;
   documents: Array<{ id: string; original_filename: string; format?: DocumentFormat | null }>;
   folder?: { id: string; name: string } | null;
   created_at: string;
@@ -50,6 +51,7 @@ export function mapChatSummary(chat: BackendChatSummary): ChatSummary {
   return {
     id: chat.id,
     title: chat.title,
+    model: chat.model ?? null,
     documents: chat.documents.map((document) => ({
       id: document.id,
       originalFilename: document.original_filename,
@@ -135,7 +137,8 @@ export async function streamChatMessage(
   client: ApiClient,
   chatId: string,
   content: string,
-  handlers: SendChatMessageHandlers = {}
+  handlers: SendChatMessageHandlers = {},
+  model?: string
 ): Promise<ChatMessage> {
-  return streamAssistantMessage(client, `/api/chats/${chatId}/messages/stream`, content, handlers);
+  return streamAssistantMessage(client, `/api/chats/${chatId}/messages/stream`, content, handlers, model);
 }

@@ -15,7 +15,8 @@ import {
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { Columns2, FileText, GripVertical, Loader2, MessageCircle, SendHorizontal, Square } from "lucide-react";
-import { ChatMessage, Citation, DocumentFormat, WorkspaceDocument } from "../../types";
+import { ChatMessage, ChatModelTier, Citation, DocumentFormat, WorkspaceDocument } from "../../types";
+import { chatModelTier, FastQualityToggle } from "../chats/FastQualityToggle";
 import { citationPageLabel, documentStatusLabel, isProcessingStatus } from "./status";
 import type { PdfSelectionAction } from "./PdfSelectionToolbar";
 
@@ -24,9 +25,10 @@ const PdfViewer = lazy(() => import("./PdfViewer").then((module) => ({ default: 
 interface DocumentWorkspaceProps {
   document: WorkspaceDocument;
   messages: ChatMessage[];
+  chatModel?: string | null;
   isLoading?: boolean;
   isChatLoading?: boolean;
-  onSendMessage?: (message: string) => Promise<void> | void;
+  onSendMessage?: (message: string, model: ChatModelTier) => Promise<void> | void;
   onCancelMessage?: () => void;
 }
 
@@ -50,6 +52,7 @@ type WorkspaceViewMode = "pdf" | "split" | "chat";
 export function DocumentWorkspace({
   document,
   messages,
+  chatModel,
   isLoading = false,
   isChatLoading = false,
   onSendMessage,
@@ -69,6 +72,7 @@ export function DocumentWorkspace({
   const [isResizingWorkspace, setIsResizingWorkspace] = useState(false);
   const [draft, setDraft] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [tier, setTier] = useState<ChatModelTier>(() => chatModelTier(chatModel));
   const workspaceBodyRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -107,7 +111,7 @@ export function DocumentWorkspace({
     setIsGenerating(true);
     setDraft("");
     try {
-      await onSendMessage?.(message.trim());
+      await onSendMessage?.(message.trim(), tier);
     } finally {
       setIsGenerating(false);
     }
@@ -232,6 +236,10 @@ export function DocumentWorkspace({
     setActiveSourceId(null);
     setPdfScrollRequestId(0);
   }, [document.id, documentPageCount]);
+
+  useEffect(() => {
+    setTier(chatModelTier(chatModel));
+  }, [document.id, chatModel]);
 
   useEffect(() => {
     writeWorkspaceViewMode(workspaceViewMode);
@@ -510,6 +518,9 @@ export function DocumentWorkspace({
                   <SendHorizontal size={18} aria-hidden="true" />
                 </button>
               )}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <FastQualityToggle value={tier} onChange={setTier} disabled={!isReady} />
             </div>
           </form>
         </div>

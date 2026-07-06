@@ -50,9 +50,13 @@ export interface ChatDocumentRef {
   format?: DocumentFormat;
 }
 
+export type ChatModelTier = "fast" | "quality";
+
 export interface ChatSummary {
   id: string;
   title: string | null;
+  // "fast" | "quality" tier, a legacy raw model id, or null.
+  model?: string | null;
   documents: ChatDocumentRef[];
   folder?: { id: string; name: string } | null;
   createdAt: string;

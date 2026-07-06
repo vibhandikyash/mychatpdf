@@ -15,11 +15,16 @@ describe("chat API helpers", () => {
     expect(mapChatSummary(backendChat)).toEqual({
       id: "chat-1",
       title: "Quarterly numbers",
+      model: null,
       documents: [{ id: "doc-1", originalFilename: "paper.pdf", format: "pdf" }],
       folder: null,
       createdAt: "2026-07-01T00:00:00Z",
       updatedAt: "2026-07-02T00:00:00Z"
     });
+  });
+
+  it("keeps the stored model tier on chat summaries", () => {
+    expect(mapChatSummary({ ...backendChat, model: "quality" }).model).toBe("quality");
   });
 
   it("maps folder chats with their folder reference", () => {
@@ -195,6 +200,23 @@ describe("chat API helpers", () => {
       role: "assistant",
       content: "Hello world",
       sources: [{ chunkId: "chunk-1", pageStart: 2, pageEnd: 2, excerpt: "Source text", score: 0.9 }]
+    });
+  });
+
+  it("sends the selected model tier with the stream request", async () => {
+    const client = new ApiClient({
+      fetcher: async (input, init) => {
+        expect(input).toBe("/api/chats/chat-1/messages/stream");
+        expect(init?.body).toBe(JSON.stringify({ content: "Compare the reports.", model: "quality" }));
+        return new Response('event: token\ndata: {"text":"ok"}', {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" }
+        });
+      }
+    });
+
+    await expect(streamChatMessage(client, "chat-1", "Compare the reports.", {}, "quality")).resolves.toMatchObject({
+      content: "ok"
     });
   });
 });

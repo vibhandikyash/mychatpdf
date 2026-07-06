@@ -77,7 +77,7 @@ describe("DocumentWorkspace", () => {
     await user.type(screen.getByRole("textbox", { name: /ask this document/i }), "Summarize this document.");
     await user.click(screen.getByRole("button", { name: /send message/i }));
 
-    expect(onSendMessage).toHaveBeenCalledWith("Summarize this document.");
+    expect(onSendMessage).toHaveBeenCalledWith("Summarize this document.", "fast");
     expect(screen.getByRole("status", { name: /generating answer/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /stop generating/i })).toBeInTheDocument();
   });

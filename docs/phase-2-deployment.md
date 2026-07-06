@@ -33,6 +33,7 @@ Set through the hosting platform's secret manager. All are in `.env.example`.
 | STRIPE_PRICE_PRO_YEARLY | Live price id for the yearly plan | For billing |
 | BILLING_RETURN_URL | Where Stripe redirects after checkout/portal (defaults to first CORS origin + /app/billing) | No |
 | OPENAI_ALLOWED_CHAT_MODELS | Comma-separated model allowlist | No (has default) |
+| OPENAI_FAST_MODEL / OPENAI_QUALITY_MODEL | OpenAI models behind the Fast and Quality composer tiers, adjustable without a redeploy | No (defaults gpt-4.1-mini and gpt-4.1) |
 | RETRIEVAL_TOP_K / MAX_CONTEXT_SOURCES | Retrieval tuning knobs | No (default 8) |
 | SENTRY_DSN | Enables Sentry error reporting when set | No |
 

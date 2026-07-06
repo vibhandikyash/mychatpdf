@@ -287,6 +287,43 @@ def test_scope_over_free_limit_returns_402_on_chat_create(authenticated_client, 
     assert response.json() == {"code": "limit_exceeded", "kind": "document_scope", "limit": 2, "used": 3}
 
 
+def test_quality_tier_rejected_on_free_plan_at_creation(authenticated_client, db_session):
+    user = _seeded_user(db_session)
+    document = _ready_document(user)
+    db_session.add(document)
+    db_session.commit()
+
+    # "quality" resolves to gpt-4.1 by default, which the free plan disallows.
+    response = authenticated_client.post(
+        "/api/chats", json={"document_ids": [str(document.id)], "model": "quality"}
+    )
+
+    assert response.status_code == 402
+    assert response.json()["kind"] == "chat_model"
+
+
+def test_quality_tier_rejected_on_free_plan_at_stream(authenticated_client, db_session, monkeypatch):
+    user = _seeded_user(db_session)
+    document = _ready_document(user)
+    db_session.add(document)
+    db_session.commit()
+    chat = create_chat(db_session, user, [document])
+    vector_service = RecordingVectorService()
+    monkeypatch.setattr("app.api.chat_routes.get_vector_service", lambda _settings: vector_service)
+
+    response = authenticated_client.post(
+        f"/api/chats/{chat.id}/messages/stream", json={"content": "Hello?", "model": "quality"}
+    )
+
+    assert response.status_code == 402
+    assert response.json()["kind"] == "chat_model"
+    assert vector_service.query_calls == 0
+    assert vector_service.answer_calls == 0
+    assert db_session.query(Message).count() == 0
+    db_session.refresh(chat)
+    assert chat.model is None
+
+
 def test_premium_model_rejected_on_free_plan(authenticated_client, db_session):
     user = _seeded_user(db_session)
     document = _ready_document(user)

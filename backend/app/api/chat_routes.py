@@ -71,6 +71,19 @@ def _chat_summary(chat: Chat) -> dict[str, object]:
     }
 
 
+def validated_model(payload: dict[str, object], settings: Settings) -> str | None:
+    """Optional "model": a tier ("fast"/"quality") or a raw id from the
+    operator allowlist. Shared by chat creation and both stream endpoints."""
+    model = payload.get("model")
+    if model is None:
+        return None
+    if not isinstance(model, str) or (
+        model not in ("fast", "quality") and model not in settings.allowed_chat_models()
+    ):
+        raise HTTPException(status_code=422, detail="Model is not allowed")
+    return model
+
+
 def _validated_title(payload: dict[str, object]) -> str | None:
     title = payload.get("title")
     if title is None:
@@ -120,16 +133,14 @@ def create_chat_route(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
-    model = payload.get("model")
-    if model is not None and (not isinstance(model, str) or model not in settings.allowed_chat_models()):
-        raise HTTPException(status_code=422, detail="Model is not allowed")
+    model = validated_model(payload, settings)
     raw_document_ids = payload.get("document_ids")
     raw_folder_id = payload.get("folder_id")
     if (raw_folder_id is None) == (raw_document_ids is None):
         raise HTTPException(status_code=422, detail="Provide exactly one of document_ids or folder_id")
 
     plan = get_active_plan(db, current_user)
-    check_model_allowed(plan, model)
+    check_model_allowed(plan, settings.resolve_chat_model(model))
 
     if raw_folder_id is not None:
         try:
@@ -234,6 +245,7 @@ def stream_chat_message(
     content = payload.get("content", "").strip()
     if not content:
         raise HTTPException(status_code=422, detail="Message content is required")
+    model = validated_model(payload, settings)
     if chat.folder_id is not None:
         # Folder chats resolve scope at message time from the folder's current
         # READY documents; the plan's scope limit is re-checked here because
@@ -249,7 +261,9 @@ def stream_chat_message(
 
     vector_service = get_vector_service(settings)
     return StreamingResponse(
-        stream_chat_response(db, current_user, scope, content, vector_service, chat=chat),
+        stream_chat_response(
+            db, current_user, scope, content, vector_service, chat=chat, model=model, settings=settings
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

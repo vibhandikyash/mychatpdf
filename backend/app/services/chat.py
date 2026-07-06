@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.models import (
     Chat,
     ChatDocument,
@@ -475,23 +476,33 @@ def stream_chat_response(
     content: str,
     vector_service: VectorService,
     chat: Chat | None = None,
+    model: str | None = None,
+    settings: Settings | None = None,
 ) -> Iterator[str]:
     scope = documents if isinstance(documents, list) else [documents]
     if any(document.status != DocumentStatus.READY for document in scope):
         return iter([format_sse("error", {"message": "Document is not ready for chat"})])
 
+    settings = settings or get_settings()
+    if chat is None:
+        chat = get_or_create_chat(db, user, scope[0])
+
     # Shared enforcement point for both the /api/chats stream and the legacy
     # per-document stream. This runs eagerly (before the response starts
     # streaming), so LimitExceeded surfaces as an HTTP 402 rather than a
     # mid-stream error, and it runs before the OpenAI call.
-    if chat is not None and chat.model:
-        # Re-validate the stored model against the current plan so a user who
-        # downgraded cannot keep streaming with a premium model.
-        check_model_allowed(get_active_plan(db, user), chat.model)
+    # Re-validate against the current plan so a user who downgraded cannot
+    # keep streaming with a premium model. Tiers ("fast"/"quality") are gated
+    # on the resolved OpenAI model.
+    answer_model = settings.resolve_chat_model(model if model is not None else chat.model)
+    if answer_model:
+        check_model_allowed(get_active_plan(db, user), answer_model)
     check_and_increment(db, user, "ai_message")
 
-    if chat is None:
-        chat = get_or_create_chat(db, user, scope[0])
+    if model is not None:
+        # The composer toggle sticks to the conversation; this becomes durable
+        # with the message commit below.
+        chat.model = model
     single_document = scope[0] if len(scope) == 1 else None
     message_document_id = single_document.id if single_document else None
     prior_messages = list(
@@ -526,7 +537,16 @@ def stream_chat_response(
     db.refresh(assistant_message)
 
     return _generate_chat_response(
-        db, user, scope, single_document, chat, assistant_message, content, contextual_question, vector_service
+        db,
+        user,
+        scope,
+        single_document,
+        chat,
+        assistant_message,
+        content,
+        contextual_question,
+        vector_service,
+        answer_model,
     )
 
 
@@ -540,6 +560,7 @@ def _generate_chat_response(
     content: str,
     contextual_question: str,
     vector_service: VectorService,
+    answer_model: str | None = None,
 ) -> Iterator[str]:
     answer_parts: list[str] = []
     sources: list[RetrievedSource] = []
@@ -592,7 +613,7 @@ def _generate_chat_response(
                     lexical = _merge_sources(exact_sources, keyword_sources, limit=limit // 2)
                     sources = _merge_sources(lexical, vector_sources, limit=limit)
             sources = _hydrate_source_context(db, scope, sources)
-            answer_kwargs = {"model": chat.model} if chat.model else {}
+            answer_kwargs = {"model": answer_model} if answer_model else {}
             for token in vector_service.stream_answer_tokens(contextual_question, sources, **answer_kwargs):
                 answer_parts.append(token)
                 yield format_sse("token", {"text": token})

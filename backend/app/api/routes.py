@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
-from app.api.chat_routes import message_payload
+from app.api.chat_routes import message_payload, validated_model
 from app.api.deps import get_current_user, get_owned_document
 from app.api.pagination import decode_cursor, encode_cursor
 from app.core.config import Settings, get_settings
@@ -410,6 +410,7 @@ def get_document_chat(
             "id": str(chat.id),
             "document_id": str(document.id),
             "title": chat.title,
+            "model": chat.model,
         },
         "messages": [message_payload(message) for message in chat.messages],
     }
@@ -427,10 +428,11 @@ def stream_document_chat(
     content = payload.get("content", "").strip()
     if not content:
         raise HTTPException(status_code=422, detail="Message content is required")
+    model = validated_model(payload, settings)
 
     vector_service = get_vector_service(settings)
     return StreamingResponse(
-        stream_chat_response(db, current_user, document, content, vector_service),
+        stream_chat_response(db, current_user, document, content, vector_service, model=model, settings=settings),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

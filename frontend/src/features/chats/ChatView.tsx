@@ -1,15 +1,16 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Folder, Loader2, SendHorizontal } from "lucide-react";
-import { ChatDocumentRef, ChatMessage, ChatSummary, Citation } from "../../types";
+import { ChatDocumentRef, ChatMessage, ChatModelTier, ChatSummary, Citation } from "../../types";
 import { citationPageLabel } from "../documents/status";
 import { chatTitle } from "./ChatHistory";
+import { chatModelTier, FastQualityToggle } from "./FastQualityToggle";
 
 interface ChatViewProps {
   chat: ChatSummary | null;
   messages: ChatMessage[];
   isLoading?: boolean;
-  onSendMessage?: (content: string) => Promise<void> | void;
+  onSendMessage?: (content: string, model: ChatModelTier) => Promise<void> | void;
 }
 
 function findSourceDocument(chat: ChatSummary | null, source: Citation): ChatDocumentRef | undefined {
@@ -57,8 +58,15 @@ function SourceCitation({ chat, source }: { chat: ChatSummary | null; source: Ci
 export function ChatView({ chat, messages, isLoading = false, onSendMessage }: ChatViewProps) {
   const [draft, setDraft] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [tier, setTier] = useState<ChatModelTier>("fast");
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const canSend = Boolean(chat) && draft.trim().length > 0 && !isGenerating;
+
+  useEffect(() => {
+    if (chat) {
+      setTier(chatModelTier(chat.model));
+    }
+  }, [chat?.id, chat?.model]);
 
   useEffect(() => {
     const scrollContainer = chatScrollRef.current;
@@ -84,7 +92,7 @@ export function ChatView({ chat, messages, isLoading = false, onSendMessage }: C
     setIsGenerating(true);
     setDraft("");
     try {
-      await onSendMessage(content);
+      await onSendMessage(content, tier);
     } finally {
       setIsGenerating(false);
     }
@@ -187,6 +195,9 @@ export function ChatView({ chat, messages, isLoading = false, onSendMessage }: C
           >
             <SendHorizontal size={18} aria-hidden="true" />
           </button>
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <FastQualityToggle value={tier} onChange={setTier} disabled={!chat} />
         </div>
       </form>
     </section>

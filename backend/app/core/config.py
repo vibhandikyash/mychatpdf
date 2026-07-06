@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     openai_request_max_retries: int = Field(default=3, ge=1, le=10)
     openai_retry_initial_seconds: float = Field(default=0.5, ge=0)
     openai_chat_model: str = "gpt-4.1-mini"
+    openai_fast_model: str = "gpt-4.1-mini"
+    openai_quality_model: str = "gpt-4.1"
     openai_chat_temperature: float | None = Field(default=None, ge=0, le=2)
     openai_allowed_chat_models: str = "gpt-4.1-mini,gpt-4.1,o4-mini"
 
@@ -62,6 +64,15 @@ class Settings(BaseSettings):
 
     def allowed_chat_models(self) -> list[str]:
         return [model.strip() for model in self.openai_allowed_chat_models.split(",") if model.strip()]
+
+    def resolve_chat_model(self, model: str | None) -> str | None:
+        """Map a stored tier ("fast"/"quality") to its operator-configured
+        OpenAI model. Legacy chats that stored a raw model id pass through."""
+        if model == "fast":
+            return self.openai_fast_model
+        if model == "quality":
+            return self.openai_quality_model
+        return model
 
     def cors_origins(self) -> list[str]:
         origins: list[str] = []

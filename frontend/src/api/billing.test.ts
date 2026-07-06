@@ -150,6 +150,7 @@ describe("billing API helpers", () => {
         title: "Quarterly numbers",
         documents: [{ id: "doc-1", originalFilename: "paper.pdf", format: "pdf" }],
         folder: null,
+        model: null,
         createdAt: "2026-07-01T00:00:00Z",
         updatedAt: "2026-07-02T00:00:00Z"
       }

@@ -40,6 +40,7 @@ import { DocumentWorkspace } from "./features/documents/DocumentWorkspace";
 import { FolderView } from "./features/folders/FolderView";
 import {
   ChatMessage,
+  ChatModelTier,
   ChatSummary,
   DocumentFormat,
   DocumentStatus,
@@ -923,7 +924,7 @@ function ChatRoute() {
     };
   }, [api, chatId]);
 
-  async function handleSendMessage(content: string) {
+  async function handleSendMessage(content: string, model: ChatModelTier) {
     if (!api || !chatId) {
       return;
     }
@@ -952,19 +953,25 @@ function ChatRoute() {
     setErrorMessage(null);
 
     try {
-      const assistantMessage = await streamChatMessage(api, chatId, content, {
-        signal: abortController.signal,
-        onStart: (messageId) => {
-          setMessages((current) => replaceMessageId(current, pendingAssistantId, messageId));
-          streamedAssistantId = messageId;
+      const assistantMessage = await streamChatMessage(
+        api,
+        chatId,
+        content,
+        {
+          signal: abortController.signal,
+          onStart: (messageId) => {
+            setMessages((current) => replaceMessageId(current, pendingAssistantId, messageId));
+            streamedAssistantId = messageId;
+          },
+          onToken: (token) => {
+            setMessages((current) => appendMessageContent(current, streamedAssistantId, token));
+          },
+          onSources: (sources) => {
+            setMessages((current) => updateMessageSources(current, streamedAssistantId, sources));
+          }
         },
-        onToken: (token) => {
-          setMessages((current) => appendMessageContent(current, streamedAssistantId, token));
-        },
-        onSources: (sources) => {
-          setMessages((current) => updateMessageSources(current, streamedAssistantId, sources));
-        }
-      });
+        model
+      );
       setMessages((current) => upsertMessage(current, streamedAssistantId, assistantMessage));
     } catch (error) {
       setMessages((current) => removeEmptyAssistantDraft(current, [pendingAssistantId, streamedAssistantId]));
@@ -992,6 +999,7 @@ function WorkspaceRoute() {
   const api = useAuthenticatedApiClient();
   const [document, setDocument] = useState<WorkspaceDocument>(() => findWorkspaceDocument(documentId, location.state));
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatModel, setChatModel] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<RouteError>(null);
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(true);
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -1017,6 +1025,7 @@ function WorkspaceRoute() {
       return current.id === currentDocumentId ? mergeWorkspaceDocument(optimisticDocument, current) : optimisticDocument;
     });
     setMessages([]);
+    setChatModel(null);
     setErrorMessage(null);
     setIsWorkspaceLoading(true);
     setIsChatLoading(true);
@@ -1043,9 +1052,10 @@ function WorkspaceRoute() {
 
     async function loadChatMessages() {
       try {
-        const chatMessages = await getDocumentChat(apiClient, currentDocumentId);
+        const documentChat = await getDocumentChat(apiClient, currentDocumentId);
         if (!cancelled) {
-          setMessages(chatMessages);
+          setMessages(documentChat.messages);
+          setChatModel(documentChat.model);
         }
       } catch {
         // Chat history is optional for opening the document workspace.
@@ -1104,7 +1114,7 @@ function WorkspaceRoute() {
           return;
         }
 
-        const [documentSummary, chatMessages] = await Promise.all([
+        const [documentSummary, documentChat] = await Promise.all([
           getDocument(apiClient, currentDocumentId),
           optionalRequest(getDocumentChat(apiClient, currentDocumentId))
         ]);
@@ -1113,8 +1123,9 @@ function WorkspaceRoute() {
         }
         setDocument((current) => mergeWorkspaceDocument(current, documentSummary));
         notifyDocumentsChanged({ document: documentSummary });
-        if (chatMessages) {
-          setMessages(chatMessages);
+        if (documentChat) {
+          setMessages(documentChat.messages);
+          setChatModel(documentChat.model);
         }
         setErrorMessage(null);
       } catch {
@@ -1174,7 +1185,7 @@ function WorkspaceRoute() {
     };
   }, [documentId]);
 
-  async function handleSendMessage(content: string) {
+  async function handleSendMessage(content: string, model: ChatModelTier) {
     if (!api || !documentId) {
       return;
     }
@@ -1203,21 +1214,32 @@ function WorkspaceRoute() {
     setErrorMessage(null);
 
     try {
-      const assistantMessage = await sendChatMessage(api, documentId, content, {
-        signal: abortController.signal,
-        onStart: (messageId) => {
-          streamedAssistantId = messageId;
-          setMessages((current) => replaceMessageId(current, pendingAssistantId, messageId));
+      const assistantMessage = await sendChatMessage(
+        api,
+        documentId,
+        content,
+        {
+          signal: abortController.signal,
+          onStart: (messageId) => {
+            streamedAssistantId = messageId;
+            setMessages((current) => replaceMessageId(current, pendingAssistantId, messageId));
+          },
+          onToken: (token) => {
+            setMessages((current) => appendMessageContent(current, streamedAssistantId, token));
+          },
+          onSources: (sources) => {
+            setMessages((current) => updateMessageSources(current, streamedAssistantId, sources));
+          }
         },
-        onToken: (token) => {
-          setMessages((current) => appendMessageContent(current, streamedAssistantId, token));
-        },
-        onSources: (sources) => {
-          setMessages((current) => updateMessageSources(current, streamedAssistantId, sources));
-        }
-      });
-      const chatMessages = await getDocumentChat(api, documentId).catch(() => null);
-      setMessages((current) => (chatMessages ? chatMessages : upsertMessage(current, streamedAssistantId, assistantMessage)));
+        model
+      );
+      const documentChat = await getDocumentChat(api, documentId).catch(() => null);
+      setMessages((current) =>
+        documentChat ? documentChat.messages : upsertMessage(current, streamedAssistantId, assistantMessage)
+      );
+      if (documentChat) {
+        setChatModel(documentChat.model);
+      }
     } catch (error) {
       if (isAbortError(error)) {
         setMessages((current) => removeEmptyAssistantDraft(current, [pendingAssistantId, streamedAssistantId]));
@@ -1243,6 +1265,7 @@ function WorkspaceRoute() {
       <DocumentWorkspace
         document={document}
         messages={messages}
+        chatModel={chatModel}
         isLoading={isWorkspaceLoading}
         isChatLoading={isChatLoading}
         onSendMessage={handleSendMessage}

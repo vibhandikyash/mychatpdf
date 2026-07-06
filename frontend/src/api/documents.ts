@@ -39,6 +39,7 @@ interface BackendChatResponse {
     id: string;
     document_id: string;
     title: string | null;
+    model?: string | null;
   };
   messages: Array<{
     id: string;
@@ -328,26 +329,35 @@ export async function getDocumentProcessingStatus(client: ApiClient, documentId:
   };
 }
 
-export async function getDocumentChat(client: ApiClient, documentId: string): Promise<ChatMessage[]> {
+export interface DocumentChat {
+  model: string | null;
+  messages: ChatMessage[];
+}
+
+export async function getDocumentChat(client: ApiClient, documentId: string): Promise<DocumentChat> {
   const response = await client.request<BackendChatResponse>(`/api/documents/${documentId}/chat`);
-  return response.messages.map((message) => ({
-    id: message.id,
-    role: message.role,
-    content: message.content,
-    createdAt: message.created_at,
-    sources: message.sources.map(mapCitation)
-  }));
+  return {
+    model: response.chat.model ?? null,
+    messages: response.messages.map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      createdAt: message.created_at,
+      sources: message.sources.map(mapCitation)
+    }))
+  };
 }
 
 export async function streamAssistantMessage(
   client: ApiClient,
   path: string,
   content: string,
-  handlers: SendChatMessageHandlers = {}
+  handlers: SendChatMessageHandlers = {},
+  model?: string
 ): Promise<ChatMessage> {
   const response = await client.requestStream(path, {
     method: "POST",
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(model ? { content, model } : { content }),
     signal: handlers.signal
   });
 
@@ -398,9 +408,10 @@ export async function sendChatMessage(
   client: ApiClient,
   documentId: string,
   content: string,
-  handlers: SendChatMessageHandlers = {}
+  handlers: SendChatMessageHandlers = {},
+  model?: string
 ): Promise<ChatMessage> {
-  return streamAssistantMessage(client, `/api/documents/${documentId}/chat/stream`, content, handlers);
+  return streamAssistantMessage(client, `/api/documents/${documentId}/chat/stream`, content, handlers, model);
 }
 
 export async function deleteDocument(client: ApiClient, documentId: string) {
