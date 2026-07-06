@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
-from app.models import Chat, Document, User
+from app.models import Chat, Document, Folder, User
 
 
 @lru_cache(maxsize=8)
@@ -126,6 +126,13 @@ def get_owned_document(db: Session, user: User, document_id: UUID) -> Document:
     if document is None or document.user_id != user.id or document.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return document
+
+
+def get_owned_folder(db: Session, user: User, folder_id: UUID) -> Folder:
+    folder = db.get(Folder, folder_id)
+    if folder is None or folder.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Folder not found")
+    return folder
 
 
 def get_owned_chat(db: Session, user: User, chat_id: UUID) -> Chat:

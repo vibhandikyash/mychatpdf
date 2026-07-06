@@ -29,6 +29,12 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         index=True,
     )
+    folder_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("folders.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     original_filename: Mapped[str] = mapped_column(String(512))
     content_type: Mapped[str] = mapped_column(String(255))
     format: Mapped[str] = mapped_column(String(16), default="pdf", server_default="pdf")
@@ -47,6 +53,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="documents")
+    folder: Mapped["Folder | None"] = relationship(back_populates="documents")
     chunks: Mapped[list["DocumentChunk"]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",

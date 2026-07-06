@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from app.api.billing_routes import router as billing_router
 from app.api.chat_routes import router as chat_router
 from app.api.dashboard_routes import router as dashboard_router
+from app.api.folder_routes import router as folder_router
 from app.api.routes import router
 from app.core.config import Settings
 from app.core.logging import configure_logging
@@ -54,6 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat_router)
     app.include_router(billing_router)
     app.include_router(dashboard_router)
+    app.include_router(folder_router)
     return app
 
 

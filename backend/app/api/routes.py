@@ -3,7 +3,7 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from app.db.session import get_db
 from app.models import (
     Document,
     DocumentStatus,
+    Folder,
     ProcessingJob,
     ProcessingJobStatus,
     User,
@@ -61,9 +62,24 @@ def me(current_user: User = Depends(get_current_user)) -> dict[str, str | None]:
     }
 
 
+def _owned_folder_or_422(db: Session, user: User, raw_folder_id: object) -> Folder:
+    """Resolve a client-supplied folder id; unknown, malformed, or cross-user
+    folders are a validation error (422), not a 404, because the folder is
+    payload here rather than the addressed resource."""
+    try:
+        folder_uuid = UUID(str(raw_folder_id))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Folder not found")
+    folder = db.get(Folder, folder_uuid)
+    if folder is None or folder.user_id != user.id:
+        raise HTTPException(status_code=422, detail="Folder not found")
+    return folder
+
+
 def _document_summary(document: Document) -> dict[str, object]:
     return {
         "id": str(document.id),
+        "folder_id": str(document.folder_id) if document.folder_id else None,
         "original_filename": document.original_filename,
         "format": document.format,
         "status": _enum_value(document.status),
@@ -84,6 +100,7 @@ DOCUMENT_LIST_MAX_LIMIT = 100
 @router.get("/api/documents")
 def list_documents(
     status_filter: Annotated[DocumentStatus | None, Query(alias="status")] = None,
+    folder_id: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=DOCUMENT_LIST_MAX_LIMIT)] = DOCUMENT_LIST_DEFAULT_LIMIT,
     cursor: str | None = None,
     current_user: User = Depends(get_current_user),
@@ -97,6 +114,13 @@ def list_documents(
     )
     if status_filter:
         statement = statement.where(Document.status == status_filter)
+    if folder_id == "root":
+        statement = statement.where(Document.folder_id.is_(None))
+    elif folder_id:
+        try:
+            statement = statement.where(Document.folder_id == UUID(folder_id))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="folder_id must be a UUID or 'root'")
     if cursor:
         cursor_created_at, cursor_document_id = decode_cursor(cursor, detail="Invalid document cursor")
         statement = statement.where(
@@ -166,11 +190,13 @@ async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
 @router.post("/api/documents", status_code=status.HTTP_201_CREATED)
 async def upload_document(
     file: Annotated[UploadFile, File()],
+    folder_id: Annotated[str | None, Form()] = None,
     content_length: Annotated[str | None, Header(alias="content-length")] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
+    folder = _owned_folder_or_422(db, current_user, folder_id) if folder_id else None
     max_bytes = settings.max_upload_mb * 1024 * 1024
     parsed_content_length = int(content_length) if content_length and content_length.isdigit() else None
     if parsed_content_length is not None and parsed_content_length > max_bytes:
@@ -189,6 +215,7 @@ async def upload_document(
 
     document = Document(
         user_id=current_user.id,
+        folder_id=folder.id if folder else None,
         original_filename=file.filename or f"upload.{document_format}",
         content_type=content_type,
         format=document_format,
@@ -243,6 +270,25 @@ def document_detail(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     document = get_owned_document(db, current_user, document_id)
+    return _document_summary(document)
+
+
+@router.patch("/api/documents/{document_id}")
+def move_document(
+    document_id: UUID,
+    payload: dict[str, object],
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    document = get_owned_document(db, current_user, document_id)
+    if "folder_id" not in payload:
+        raise HTTPException(status_code=422, detail="folder_id is required")
+    raw_folder_id = payload["folder_id"]
+    document.folder_id = (
+        _owned_folder_or_422(db, current_user, raw_folder_id).id if raw_folder_id is not None else None
+    )
+    db.commit()
+    db.refresh(document)
     return _document_summary(document)
 
 

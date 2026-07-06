@@ -14,6 +14,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     stripe_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
 
     documents: Mapped[list["Document"]] = relationship(back_populates="user")
+    folders: Mapped[list["Folder"]] = relationship(back_populates="user")
     chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="user")
     processing_jobs: Mapped[list["ProcessingJob"]] = relationship(back_populates="user")
     chats: Mapped[list["Chat"]] = relationship(back_populates="user")

@@ -34,6 +34,14 @@ class Chat(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
         nullable=True,
     )
+    # Folder chats store the folder reference and resolve their document scope
+    # at message time, so they carry no chat_documents rows.
+    folder_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("folders.id", ondelete="CASCADE"),
+        index=True,
+        nullable=True,
+    )
     user_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -44,6 +52,7 @@ class Chat(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     user: Mapped["User"] = relationship(back_populates="chats")
     document: Mapped["Document | None"] = relationship(back_populates="chats")
+    folder: Mapped["Folder | None"] = relationship(back_populates="chats")
     document_links: Mapped[list["ChatDocument"]] = relationship(
         back_populates="chat",
         cascade="all, delete-orphan",

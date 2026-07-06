@@ -14,6 +14,7 @@ from app.models import (
     Document,
     DocumentChunk,
     DocumentStatus,
+    Folder,
     Message,
     MessageRole,
     MessageSource,
@@ -146,6 +147,17 @@ def create_chat(
     db.commit()
     db.refresh(chat)
     return chat
+
+
+def folder_scope(folder: Folder) -> list[Document]:
+    """A folder chat's scope is resolved live from the folder's current READY
+    documents (created_at order via the relationship), so documents added
+    after the chat was created join existing conversations."""
+    return [
+        document
+        for document in folder.documents
+        if document.status == DocumentStatus.READY and document.deleted_at is None
+    ]
 
 
 def get_or_create_chat(db: Session, user: User, document: Document) -> Chat:

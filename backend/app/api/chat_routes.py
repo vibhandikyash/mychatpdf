@@ -10,9 +10,9 @@ from app.api.deps import get_current_user, get_owned_chat
 from app.api.pagination import decode_cursor, encode_cursor
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
-from app.models import Chat, Document, DocumentStatus, Message, MessageSource, User
+from app.models import Chat, Document, DocumentStatus, Folder, Message, MessageSource, User
 from app.services.billing import get_active_plan
-from app.services.chat import create_chat, stream_chat_response
+from app.services.chat import create_chat, folder_scope, stream_chat_response
 from app.services.usage import check_model_allowed, check_scope_size
 from app.services.vector import get_vector_service
 
@@ -50,17 +50,21 @@ def message_payload(message: Message) -> dict[str, object]:
 
 
 def _chat_summary(chat: Chat) -> dict[str, object]:
+    # Folder chats have no chat_documents rows; their documents reflect the
+    # folder's current READY documents at read time.
+    documents = folder_scope(chat.folder) if chat.folder_id else chat.documents
     return {
         "id": str(chat.id),
         "title": chat.title,
         "model": chat.model,
+        "folder": {"id": str(chat.folder.id), "name": chat.folder.name} if chat.folder_id else None,
         "documents": [
             {
                 "id": str(document.id),
                 "original_filename": document.original_filename,
                 "format": document.format,
             }
-            for document in chat.documents
+            for document in documents
         ],
         "created_at": chat.created_at.isoformat(),
         "updated_at": chat.updated_at.isoformat(),
@@ -88,7 +92,7 @@ def list_chats(
 ) -> dict[str, object]:
     statement = (
         select(Chat)
-        .options(selectinload(Chat.documents))
+        .options(selectinload(Chat.documents), selectinload(Chat.folder).selectinload(Folder.documents))
         .where(Chat.user_id == current_user.id)
         .order_by(Chat.created_at.desc(), Chat.id.desc())
         .limit(limit + 1)
@@ -120,6 +124,31 @@ def create_chat_route(
     if model is not None and (not isinstance(model, str) or model not in settings.allowed_chat_models()):
         raise HTTPException(status_code=422, detail="Model is not allowed")
     raw_document_ids = payload.get("document_ids")
+    raw_folder_id = payload.get("folder_id")
+    if (raw_folder_id is None) == (raw_document_ids is None):
+        raise HTTPException(status_code=422, detail="Provide exactly one of document_ids or folder_id")
+
+    plan = get_active_plan(db, current_user)
+    check_model_allowed(plan, model)
+
+    if raw_folder_id is not None:
+        try:
+            folder_uuid = UUID(str(raw_folder_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="folder_id must be a valid UUID") from exc
+        folder = db.get(Folder, folder_uuid)
+        if folder is None or folder.user_id != current_user.id:
+            raise HTTPException(status_code=422, detail="Folder not found")
+        # Scope (READY documents, plan size limit) is resolved and enforced at
+        # message time, so a growing folder stays part of this conversation.
+        chat = Chat(
+            user_id=current_user.id, folder_id=folder.id, title=_validated_title(payload), model=model
+        )
+        db.add(chat)
+        db.commit()
+        db.refresh(chat)
+        return _chat_summary(chat)
+
     if not isinstance(raw_document_ids, list) or not raw_document_ids:
         raise HTTPException(status_code=422, detail="document_ids must be a non-empty list")
     try:
@@ -127,8 +156,6 @@ def create_chat_route(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="document_ids must contain valid UUIDs") from exc
 
-    plan = get_active_plan(db, current_user)
-    check_model_allowed(plan, model)
     check_scope_size(plan, document_ids)
 
     documents: list[Document] = []
@@ -206,12 +233,22 @@ def stream_chat_message(
     content = payload.get("content", "").strip()
     if not content:
         raise HTTPException(status_code=422, detail="Message content is required")
-    if not chat.documents:
-        raise HTTPException(status_code=409, detail="Chat has no documents in scope")
+    if chat.folder_id is not None:
+        # Folder chats resolve scope at message time from the folder's current
+        # READY documents; the plan's scope limit is re-checked here because
+        # the folder may have grown since the chat was created.
+        scope = folder_scope(chat.folder)
+        if not scope:
+            raise HTTPException(status_code=409, detail="Folder has no ready documents")
+        check_scope_size(get_active_plan(db, current_user), [document.id for document in scope])
+    else:
+        scope = list(chat.documents)
+        if not scope:
+            raise HTTPException(status_code=409, detail="Chat has no documents in scope")
 
     vector_service = get_vector_service(settings)
     return StreamingResponse(
-        stream_chat_response(db, current_user, list(chat.documents), content, vector_service, chat=chat),
+        stream_chat_response(db, current_user, scope, content, vector_service, chat=chat),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
