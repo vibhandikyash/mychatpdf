@@ -149,6 +149,7 @@ describe("billing API helpers", () => {
         id: "chat-1",
         title: "Quarterly numbers",
         documents: [{ id: "doc-1", originalFilename: "paper.pdf", format: "pdf" }],
+        folder: null,
         createdAt: "2026-07-01T00:00:00Z",
         updatedAt: "2026-07-02T00:00:00Z"
       }

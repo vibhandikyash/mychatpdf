@@ -12,6 +12,7 @@ export type DocumentFormat = "pdf" | "docx" | "pptx" | "txt" | "rtf";
 
 export interface DocumentSummary {
   id: string;
+  folderId?: string;
   originalFilename: string;
   format?: DocumentFormat;
   status: DocumentStatus;
@@ -22,6 +23,14 @@ export interface DocumentSummary {
   processedAt?: string;
   lastOpenedAt?: string;
   failureMessage?: string;
+}
+
+export interface FolderSummary {
+  id: string;
+  name: string;
+  documentCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Citation {
@@ -45,6 +54,7 @@ export interface ChatSummary {
   id: string;
   title: string | null;
   documents: ChatDocumentRef[];
+  folder?: { id: string; name: string } | null;
   createdAt: string;
   updatedAt: string;
 }

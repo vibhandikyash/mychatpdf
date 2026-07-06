@@ -3,6 +3,7 @@ import { ChatMessage, Citation, DocumentFormat, DocumentStatus, DocumentSummary 
 
 interface BackendDocumentSummary {
   id: string;
+  folder_id?: string | null;
   original_filename: string;
   format?: DocumentFormat | null;
   status: DocumentStatus;
@@ -70,6 +71,7 @@ export interface SendChatMessageHandlers {
 export function mapDocumentSummary(document: BackendDocumentSummary): DocumentSummary {
   return {
     id: document.id,
+    folderId: document.folder_id ?? undefined,
     originalFilename: document.original_filename,
     format: document.format ?? "pdf",
     status: document.status,
@@ -251,12 +253,15 @@ function createClientMessageId() {
   return `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export async function listDocuments(client: ApiClient): Promise<DocumentSummary[]> {
+export async function listDocuments(client: ApiClient, folderId?: string | "root"): Promise<DocumentSummary[]> {
   const documents: BackendDocumentSummary[] = [];
   let cursor: string | null = null;
 
   do {
     const params = new URLSearchParams({ limit: "100" });
+    if (folderId) {
+      params.set("folder_id", folderId);
+    }
     if (cursor) {
       params.set("cursor", cursor);
     }
@@ -274,9 +279,12 @@ export async function getDocument(client: ApiClient, documentId: string): Promis
   return mapDocumentSummary(response);
 }
 
-export async function uploadDocument(client: ApiClient, file: File) {
+export async function uploadDocument(client: ApiClient, file: File, folderId?: string) {
   const formData = new FormData();
   formData.set("file", file);
+  if (folderId) {
+    formData.set("folder_id", folderId);
+  }
   const response = await client.request<BackendUploadResponse>("/api/documents", {
     method: "POST",
     body: formData
@@ -286,6 +294,18 @@ export async function uploadDocument(client: ApiClient, file: File) {
     status: response.status,
     processingJobId: response.processing_job_id
   };
+}
+
+export async function moveDocument(
+  client: ApiClient,
+  documentId: string,
+  folderId: string | null
+): Promise<DocumentSummary> {
+  const response = await client.request<BackendDocumentSummary>(`/api/documents/${documentId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ folder_id: folderId })
+  });
+  return mapDocumentSummary(response);
 }
 
 export async function getDocumentFileUrl(client: ApiClient, documentId: string) {

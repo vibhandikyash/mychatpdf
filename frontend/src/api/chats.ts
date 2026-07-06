@@ -6,6 +6,7 @@ interface BackendChatSummary {
   id: string;
   title: string | null;
   documents: Array<{ id: string; original_filename: string; format?: DocumentFormat | null }>;
+  folder?: { id: string; name: string } | null;
   created_at: string;
   updated_at: string;
 }
@@ -54,6 +55,7 @@ export function mapChatSummary(chat: BackendChatSummary): ChatSummary {
       originalFilename: document.original_filename,
       format: document.format ?? "pdf"
     })),
+    folder: chat.folder ?? null,
     createdAt: chat.created_at,
     updatedAt: chat.updated_at
   };
@@ -91,10 +93,18 @@ export async function listChats(client: ApiClient, cursor?: string): Promise<Cha
   };
 }
 
-export async function createChat(client: ApiClient, documentIds: string[], title?: string): Promise<ChatSummary> {
+export type ChatScope = string[] | { folderId: string };
+
+export async function createChat(client: ApiClient, scope: ChatScope, title?: string): Promise<ChatSummary> {
+  const body: Record<string, unknown> = Array.isArray(scope)
+    ? { document_ids: scope }
+    : { folder_id: scope.folderId };
+  if (title) {
+    body.title = title;
+  }
   const response = await client.request<BackendChatSummary>("/api/chats", {
     method: "POST",
-    body: JSON.stringify(title ? { document_ids: documentIds, title } : { document_ids: documentIds })
+    body: JSON.stringify(body)
   });
   return mapChatSummary(response);
 }

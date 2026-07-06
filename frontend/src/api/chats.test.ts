@@ -16,8 +16,16 @@ describe("chat API helpers", () => {
       id: "chat-1",
       title: "Quarterly numbers",
       documents: [{ id: "doc-1", originalFilename: "paper.pdf", format: "pdf" }],
+      folder: null,
       createdAt: "2026-07-01T00:00:00Z",
       updatedAt: "2026-07-02T00:00:00Z"
+    });
+  });
+
+  it("maps folder chats with their folder reference", () => {
+    expect(mapChatSummary({ ...backendChat, folder: { id: "folder-1", name: "Research" } }).folder).toEqual({
+      id: "folder-1",
+      name: "Research"
     });
   });
 
@@ -52,6 +60,22 @@ describe("chat API helpers", () => {
     const chat = await createChat(client, ["doc-1"], "Quarterly numbers");
     expect(chat.id).toBe("chat-1");
     expect(requestBody).toBe(JSON.stringify({ document_ids: ["doc-1"], title: "Quarterly numbers" }));
+  });
+
+  it("creates a chat scoped to a folder", async () => {
+    let requestBody: BodyInit | null | undefined;
+    const client = new ApiClient({
+      fetcher: async (_input, init) => {
+        requestBody = init?.body;
+        return new Response(JSON.stringify({ ...backendChat, folder: { id: "folder-1", name: "Research" } }), {
+          status: 201
+        });
+      }
+    });
+
+    const chat = await createChat(client, { folderId: "folder-1" });
+    expect(chat.folder).toEqual({ id: "folder-1", name: "Research" });
+    expect(requestBody).toBe(JSON.stringify({ folder_id: "folder-1" }));
   });
 
   it("omits the title when creating an untitled chat", async () => {

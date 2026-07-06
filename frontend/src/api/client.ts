@@ -89,18 +89,18 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      if (response.status === 402) {
-        const body = (await response.json().catch(() => null)) as {
-          code?: string;
-          kind?: LimitKind;
-          limit?: number;
-          used?: number;
-        } | null;
-        if (body?.code === "limit_exceeded" && body.kind) {
-          throw new LimitExceededError(body.kind, body.limit ?? 0, body.used ?? 0);
-        }
+      const body = (await response.json().catch(() => null)) as {
+        code?: string;
+        kind?: LimitKind;
+        limit?: number;
+        used?: number;
+        detail?: unknown;
+      } | null;
+      if (response.status === 402 && body?.code === "limit_exceeded" && body.kind) {
+        throw new LimitExceededError(body.kind, body.limit ?? 0, body.used ?? 0);
       }
-      throw new ApiError(response.statusText || "Request failed", response.status);
+      const detail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
+      throw new ApiError(detail ?? (response.statusText || "Request failed"), response.status);
     }
 
     return response;
