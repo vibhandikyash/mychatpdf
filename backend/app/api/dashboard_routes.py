@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.api.chat_routes import _chat_summary
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models import Chat, Document, User
+from app.models import Chat, Document, Folder, User
 from app.services.billing import subscription_summary
 from app.services.usage import usage_summary
 
@@ -50,7 +50,10 @@ def dashboard(
         db.scalars(
             select(Chat)
             .where(Chat.user_id == current_user.id)
-            .options(selectinload(Chat.documents))
+            .options(
+                selectinload(Chat.documents),
+                selectinload(Chat.folder).selectinload(Folder.documents),
+            )
             .order_by(Chat.updated_at.desc(), Chat.id.desc())
             .limit(RECENT_CONVERSATION_LIMIT)
         )

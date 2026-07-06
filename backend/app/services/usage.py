@@ -40,6 +40,13 @@ def _period_bounds(db: Session, user: User) -> tuple[datetime, datetime]:
 
 
 def current_period(db: Session, user: User) -> UsagePeriod:
+    """Get or create the user's usage row for the current billing period.
+
+    First-of-period creation commits immediately so concurrent requests see the
+    row without blocking on this request's transaction. Enforcement helpers
+    call this at the top of a request, before any other pending writes, so the
+    early commit never makes unrelated state durable; keep that ordering.
+    """
     period_start, period_end = _period_bounds(db, user)
     statement = select(UsagePeriod).where(
         UsagePeriod.user_id == user.id, UsagePeriod.period_start == period_start

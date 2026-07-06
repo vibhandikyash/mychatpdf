@@ -44,24 +44,42 @@ def extract_pdf(data: bytes) -> list[ExtractedPage]:
     return _require_text(pages)
 
 
+def _docx_table_text(table) -> str:
+    return "\n".join(
+        " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+        for row in table.rows
+        if any(cell.text.strip() for cell in row.cells)
+    )
+
+
 def extract_docx(data: bytes) -> list[ExtractedPage]:
     from docx import Document as DocxDocument
+    from docx.oxml.ns import qn
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
 
     try:
         docx_document = DocxDocument(BytesIO(data))
     except Exception as error:
         raise UnsupportedFileError("This DOCX file could not be opened. It may be corrupt.") from error
 
-    # Split on explicit/rendered page breaks when the document has them,
-    # otherwise fall back to fixed-size word sections.
+    # Walk body blocks in document order so tables keep their place between
+    # paragraphs. Split on explicit/rendered page breaks when the document has
+    # them, otherwise fall back to fixed-size word sections.
     sections: list[str] = []
     current: list[str] = []
-    for paragraph in docx_document.paragraphs:
-        if paragraph.text.strip():
-            current.append(paragraph.text)
-        if paragraph._p.xpath(".//w:br[@w:type='page'] | .//w:lastRenderedPageBreak"):
-            sections.append("\n".join(current))
-            current = []
+    for child in docx_document.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            paragraph = Paragraph(child, docx_document)
+            if paragraph.text.strip():
+                current.append(paragraph.text)
+            if child.xpath(".//w:br[@w:type='page'] | .//w:lastRenderedPageBreak"):
+                sections.append("\n".join(current))
+                current = []
+        elif child.tag == qn("w:tbl"):
+            table_text = _docx_table_text(Table(child, docx_document))
+            if table_text:
+                current.append(table_text)
     sections.append("\n".join(current))
     sections = [section for section in sections if section.strip()]
 
@@ -78,13 +96,23 @@ def extract_pptx(data: bytes) -> list[ExtractedPage]:
     except Exception as error:
         raise UnsupportedFileError("This PPTX file could not be opened. It may be corrupt.") from error
 
+    def slide_text(slide) -> str:
+        parts: list[str] = []
+        for shape in slide.shapes:
+            if shape.has_text_frame and shape.text_frame.text.strip():
+                parts.append(shape.text_frame.text)
+            elif getattr(shape, "has_table", False) and shape.has_table:
+                rows = [
+                    " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                    for row in shape.table.rows
+                    if any(cell.text.strip() for cell in row.cells)
+                ]
+                if rows:
+                    parts.append("\n".join(rows))
+        return "\n".join(parts)
+
     pages = [
-        ExtractedPage(
-            page_number=index,
-            text="\n".join(
-                shape.text_frame.text for shape in slide.shapes if shape.has_text_frame and shape.text_frame.text.strip()
-            ),
-        )
+        ExtractedPage(page_number=index, text=slide_text(slide))
         for index, slide in enumerate(presentation.slides, start=1)
     ]
     return _require_text(pages)

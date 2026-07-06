@@ -114,3 +114,48 @@ def test_extract_pdf_no_text_error_carries_page_count():
         extract_pdf(pdf.tobytes())
 
     assert exc_info.value.page_count == 3
+
+
+def test_extract_docx_includes_table_text():
+    from docx import Document as DocxDocument
+    from io import BytesIO
+
+    doc = DocxDocument()
+    doc.add_paragraph("Rates overview.")
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Plan"
+    table.cell(0, 1).text = "Rate"
+    table.cell(1, 0).text = "Standard"
+    table.cell(1, 1).text = "42 dollars"
+    doc.add_paragraph("End of document.")
+    buffer = BytesIO()
+    doc.save(buffer)
+
+    pages = extract_docx(buffer.getvalue())
+
+    text = "\n".join(page.text for page in pages)
+    assert "Rates overview." in text
+    assert "Standard | 42 dollars" in text
+    assert text.index("Rates overview.") < text.index("Standard | 42 dollars") < text.index("End of document.")
+
+
+def test_extract_pptx_includes_table_text():
+    from io import BytesIO
+
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    shape = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(4), Inches(2))
+    shape.table.cell(0, 0).text = "Quarter"
+    shape.table.cell(0, 1).text = "Revenue"
+    shape.table.cell(1, 0).text = "Q4"
+    shape.table.cell(1, 1).text = "9 million"
+    buffer = BytesIO()
+    presentation.save(buffer)
+
+    pages = extract_pptx(buffer.getvalue())
+
+    assert len(pages) == 1
+    assert "Q4 | 9 million" in pages[0].text

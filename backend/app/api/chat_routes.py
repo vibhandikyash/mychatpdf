@@ -182,6 +182,7 @@ def chat_detail(
         select(Chat)
         .options(
             selectinload(Chat.documents),
+            selectinload(Chat.folder).selectinload(Folder.documents),
             selectinload(Chat.messages).selectinload(Message.sources).selectinload(MessageSource.document),
         )
         .where(Chat.id == chat.id)
