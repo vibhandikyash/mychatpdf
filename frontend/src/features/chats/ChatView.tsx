@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Loader2, SendHorizontal } from "lucide-react";
+import { Folder, Loader2, SendHorizontal } from "lucide-react";
 import { ChatDocumentRef, ChatMessage, ChatSummary, Citation } from "../../types";
 import { citationPageLabel } from "../documents/status";
 import { chatTitle } from "./ChatHistory";
@@ -95,6 +95,12 @@ export function ChatView({ chat, messages, isLoading = false, onSendMessage }: C
       <header className="shrink-0 border-b border-slate-200 px-5 py-4">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-sea">Conversation</p>
         <h1 className="mt-1 truncate text-xl font-semibold text-ink">{chat ? chatTitle(chat) : "Loading conversation..."}</h1>
+        {chat?.folder ? (
+          <span className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-teal-50 px-2.5 py-1 text-xs font-semibold text-sea ring-1 ring-teal-100">
+            <Folder size={13} aria-hidden="true" />
+            <span className="truncate">{chat.folder.name}</span>
+          </span>
+        ) : null}
         {chat?.documents.length ? (
           <ul className="mt-2 flex flex-wrap gap-1.5">
             {chat.documents.map((document) => (

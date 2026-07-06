@@ -4,9 +4,11 @@ import {
   CreditCard,
   FilePlus2,
   FileText,
+  Folder,
   Library,
   Menu,
   MessagesSquare,
+  Plus,
   X
 } from "lucide-react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
@@ -18,22 +20,33 @@ import {
   getDocumentChat,
   getDocumentProcessingStatus,
   listDocuments,
+  moveDocument,
   retryDocumentProcessing,
   sendChatMessage,
   uploadDocument
 } from "./api/documents";
 import { createChat, deleteChat, getChat, listChats, renameChat, streamChatMessage } from "./api/chats";
+import { createFolder, listFolders } from "./api/folders";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";
 import { BillingPage } from "./features/billing/BillingPage";
 import { LimitExceededNotice } from "./features/billing/LimitExceededNotice";
 import { BrandLockup } from "./features/brand/Brand";
-import { ChatHistory } from "./features/chats/ChatHistory";
+import { ChatHistory, chatTitle } from "./features/chats/ChatHistory";
 import { ChatView } from "./features/chats/ChatView";
 import { ScopePicker } from "./features/chats/ScopePicker";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { DocumentLibrary } from "./features/documents/DocumentLibrary";
 import { DocumentWorkspace } from "./features/documents/DocumentWorkspace";
-import { ChatMessage, ChatSummary, DocumentFormat, DocumentStatus, DocumentSummary, WorkspaceDocument } from "./types";
+import { FolderView } from "./features/folders/FolderView";
+import {
+  ChatMessage,
+  ChatSummary,
+  DocumentFormat,
+  DocumentStatus,
+  DocumentSummary,
+  FolderSummary,
+  WorkspaceDocument
+} from "./types";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const e2eAuthBypassEnabled = import.meta.env.VITE_E2E_AUTH_BYPASS === "true";
@@ -41,6 +54,7 @@ const clerkAuthEnabled = Boolean(clerkPublishableKey) && !e2eAuthBypassEnabled;
 const PROCESSING_POLL_MS = 2500;
 const FILE_URL_RETRY_MS = 3000;
 const DOCUMENTS_CHANGED_EVENT = "mychatpdf:documents-changed";
+const FOLDERS_CHANGED_EVENT = "mychatpdf:folders-changed";
 
 interface DocumentsChangedDetail {
   document?: DocumentSummary;
@@ -96,6 +110,16 @@ export function App() {
           <RequireAuth>
             <AppShell fullBleed>
               <WorkspaceRoute />
+            </AppShell>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/app/folders/:folderId"
+        element={
+          <RequireAuth>
+            <AppShell>
+              <FolderRoute />
             </AppShell>
           </RequireAuth>
         }
@@ -228,7 +252,66 @@ function AppShell({ children, fullBleed = false }: AppShellProps) {
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const api = useAuthenticatedApiClient();
   const location = useLocation();
+  const navigate = useNavigate();
   const [recentDocuments, setRecentDocuments] = useState<DocumentSummary[]>([]);
+  const [recentChats, setRecentChats] = useState<ChatSummary[]>([]);
+  const [folders, setFolders] = useState<FolderSummary[]>([]);
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [folderNameDraft, setFolderNameDraft] = useState("");
+
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    const apiClient = api;
+    let cancelled = false;
+
+    function refresh() {
+      void listChats(apiClient)
+        .then((page) => {
+          if (!cancelled) {
+            setRecentChats(page.items.slice(0, 6));
+          }
+        })
+        .catch(() => undefined);
+      void listFolders(apiClient)
+        .then((items) => {
+          if (!cancelled) {
+            setFolders(items);
+          }
+        })
+        .catch(() => undefined);
+    }
+
+    refresh();
+    window.addEventListener(FOLDERS_CHANGED_EVENT, refresh);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(FOLDERS_CHANGED_EVENT, refresh);
+    };
+  }, [api, location.pathname]);
+
+  async function submitNewFolder() {
+    const name = folderNameDraft.trim();
+    if (!api || !name) {
+      setIsCreatingFolder(false);
+      setFolderNameDraft("");
+      return;
+    }
+
+    try {
+      const folder = await createFolder(api, name);
+      setFolders((current) => [...current, folder]);
+      setIsCreatingFolder(false);
+      setFolderNameDraft("");
+      onNavigate?.();
+      navigate(`/app/folders/${folder.id}`);
+    } catch {
+      // Keep the input open so the name can be adjusted and retried.
+    }
+  }
 
   useEffect(() => {
     if (!api) {
@@ -331,6 +414,103 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       <section className="scrollbar-soft mt-6 min-h-0 flex-1 overflow-y-auto">
         <div className="px-2">
+          <SidebarSectionTitle>Chats</SidebarSectionTitle>
+        </div>
+        <ul className="mt-2 space-y-1">
+          {recentChats.length ? (
+            recentChats.map((chat) => (
+              <li key={chat.id}>
+                <Link
+                  to={`/app/chats/${chat.id}`}
+                  onClick={onNavigate}
+                  className={`flex min-w-0 items-center gap-2 rounded-lg px-2 py-2 text-sm transition ${
+                    location.pathname === `/app/chats/${chat.id}`
+                      ? "bg-teal-50 text-ink ring-1 ring-teal-100"
+                      : "text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  <MessagesSquare size={15} aria-hidden="true" className="shrink-0 text-sea" />
+                  <span className="min-w-0 truncate font-medium">{chatTitle(chat)}</span>
+                </Link>
+              </li>
+            ))
+          ) : (
+            <li>
+              <Link
+                to="/app/chats/new"
+                onClick={onNavigate}
+                className="flex items-center gap-2 rounded-lg border border-dashed border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:border-sea hover:bg-teal-50 hover:text-ink"
+              >
+                <Plus size={15} aria-hidden="true" />
+                Start your first chat
+              </Link>
+            </li>
+          )}
+        </ul>
+
+        <div className="mt-6 px-2">
+          <SidebarSectionTitle>Folders</SidebarSectionTitle>
+        </div>
+        <ul className="mt-2 space-y-1">
+          {folders.map((folder) => (
+            <li key={folder.id}>
+              <Link
+                to={`/app/folders/${folder.id}`}
+                onClick={onNavigate}
+                className={`flex min-w-0 items-center gap-2 rounded-lg px-2 py-2 text-sm transition ${
+                  location.pathname === `/app/folders/${folder.id}`
+                    ? "bg-teal-50 text-ink ring-1 ring-teal-100"
+                    : "text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                <Folder size={15} aria-hidden="true" className="shrink-0 text-sea" />
+                <span className="min-w-0 flex-1 truncate font-medium">{folder.name}</span>
+                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                  {folder.documentCount}
+                </span>
+              </Link>
+            </li>
+          ))}
+          <li>
+            {isCreatingFolder ? (
+              <input
+                autoFocus
+                aria-label="New folder name"
+                value={folderNameDraft}
+                onChange={(event) => setFolderNameDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void submitNewFolder();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setIsCreatingFolder(false);
+                    setFolderNameDraft("");
+                  }
+                }}
+                onBlur={() => {
+                  setIsCreatingFolder(false);
+                  setFolderNameDraft("");
+                }}
+                placeholder="Folder name..."
+                maxLength={255}
+                className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm text-ink outline-none focus:border-sea focus:ring-4 focus:ring-teal-100"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsCreatingFolder(true)}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50 hover:text-ink"
+              >
+                <Plus size={15} aria-hidden="true" />
+                New folder
+              </button>
+            )}
+          </li>
+        </ul>
+
+        <div className="mt-6 px-2">
           <SidebarSectionTitle>Recent PDFs</SidebarSectionTitle>
         </div>
         <ul className="mt-2 space-y-1">
@@ -412,6 +592,35 @@ function NavItem({
   );
 }
 
+async function uploadAndOpenDocument(
+  api: ApiClient,
+  navigate: ReturnType<typeof useNavigate>,
+  file: File,
+  folderId?: string
+) {
+  const format = documentFormatFromFilename(file.name);
+  const localPreviewUrl = format === "pdf" ? URL.createObjectURL(file) : undefined;
+  try {
+    const result = await uploadDocument(api, file, folderId);
+    const uploadedDocument = createUploadedDocumentSummary(result.documentId, result.status, file);
+    notifyDocumentsChanged({ document: uploadedDocument });
+    navigate(`/app/documents/${result.documentId}`, {
+      state: {
+        localPreviewUrl,
+        format,
+        originalFilename: file.name,
+        fileSizeBytes: file.size,
+        createdAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    if (localPreviewUrl) {
+      URL.revokeObjectURL(localPreviewUrl);
+    }
+    throw error;
+  }
+}
+
 function DashboardRoute() {
   const navigate = useNavigate();
   const api = useAuthenticatedApiClient();
@@ -420,28 +629,7 @@ function DashboardRoute() {
     if (!api) {
       return;
     }
-
-    const format = documentFormatFromFilename(file.name);
-    const localPreviewUrl = format === "pdf" ? URL.createObjectURL(file) : undefined;
-    try {
-      const result = await uploadDocument(api, file);
-      const uploadedDocument = createUploadedDocumentSummary(result.documentId, result.status, file);
-      notifyDocumentsChanged({ document: uploadedDocument });
-      navigate(`/app/documents/${result.documentId}`, {
-        state: {
-          localPreviewUrl,
-          format,
-          originalFilename: file.name,
-          fileSizeBytes: file.size,
-          createdAt: new Date().toISOString()
-        }
-      });
-    } catch (error) {
-      if (localPreviewUrl) {
-        URL.revokeObjectURL(localPreviewUrl);
-      }
-      throw error;
-    }
+    await uploadAndOpenDocument(api, navigate, file);
   }
 
   return (
@@ -449,6 +637,33 @@ function DashboardRoute() {
       api={api}
       onUploadFile={onUploadFile}
       onOpenChat={(chat) => navigate(`/app/chats/${chat.id}`)}
+    />
+  );
+}
+
+function FolderRoute() {
+  const { folderId } = useParams();
+  const navigate = useNavigate();
+  const api = useAuthenticatedApiClient();
+
+  if (!folderId) {
+    return <Navigate to="/app/documents" replace />;
+  }
+
+  return (
+    <FolderView
+      api={api}
+      folderId={folderId}
+      onOpenDocument={(documentId) => navigate(`/app/documents/${documentId}`)}
+      onOpenChat={(chatId) => navigate(`/app/chats/${chatId}`)}
+      onDeleted={() => navigate("/app/documents")}
+      onUploadFile={async (file) => {
+        if (!api) {
+          return;
+        }
+        await uploadAndOpenDocument(api, navigate, file, folderId);
+      }}
+      onFoldersChanged={notifyFoldersChanged}
     />
   );
 }
@@ -476,6 +691,7 @@ function LibraryRoute() {
   const navigate = useNavigate();
   const api = useAuthenticatedApiClient();
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [folders, setFolders] = useState<FolderSummary[]>([]);
 
   async function refreshDocuments() {
     if (!api) {
@@ -489,12 +705,27 @@ function LibraryRoute() {
 
   useEffect(() => {
     void refreshDocuments().catch(() => undefined);
+    if (api) {
+      void listFolders(api).then(setFolders).catch(() => undefined);
+    }
   }, [api]);
 
   return (
     <DocumentLibrary
       documents={documents}
+      folders={folders}
       onOpen={(documentId) => navigate(`/app/documents/${documentId}`)}
+      onMove={(documentId, folderId) => {
+        if (!api) {
+          return;
+        }
+        void moveDocument(api, documentId, folderId)
+          .then(() => {
+            notifyFoldersChanged();
+            return refreshDocuments();
+          })
+          .catch(() => undefined);
+      }}
       onDelete={(documentId) => {
         if (!api) {
           return;
@@ -1027,6 +1258,10 @@ function isProcessingStatus(status: DocumentStatus) {
 
 function notifyDocumentsChanged(detail: DocumentsChangedDetail) {
   window.dispatchEvent(new CustomEvent<DocumentsChangedDetail>(DOCUMENTS_CHANGED_EVENT, { detail }));
+}
+
+function notifyFoldersChanged() {
+  window.dispatchEvent(new Event(FOLDERS_CHANGED_EVENT));
 }
 
 function readDocumentsChangedDetail(event: Event): DocumentsChangedDetail | null {

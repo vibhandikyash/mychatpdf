@@ -225,7 +225,9 @@ export function DashboardPage({ api, onUploadFile, onOpenChat }: DashboardPagePr
                         >
                           <span className="truncate font-medium text-ink">{chatTitle(chat)}</span>
                           <span className="truncate text-sm text-slate-500">
-                            {chat.documents.map((document) => document.originalFilename).join(", ") || "No documents"}
+                            {chat.folder
+                              ? `${chat.folder.name} folder`
+                              : chat.documents.map((document) => document.originalFilename).join(", ") || "No documents"}
                             {" - "}
                             {formatDate(chat.updatedAt)}
                           </span>

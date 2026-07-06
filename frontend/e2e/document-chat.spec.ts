@@ -132,6 +132,16 @@ async function mockApi(
       return;
     }
 
+    if (method === "GET" && url.pathname === "/api/chats") {
+      await fulfillJson(route, { items: [], next_cursor: null });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/folders") {
+      await fulfillJson(route, { items: [] });
+      return;
+    }
+
     if (method === "GET" && url.pathname === "/api/documents") {
       await fulfillJson(route, {
         items: state.uploaded ? [documentSummary(state.ready ? "ready" : "uploaded")] : [],
