@@ -13,11 +13,18 @@ interface BackendPlan {
   allowed_chat_models: string[] | null;
 }
 
+interface BackendUpcomingSubscription {
+  plan: { id: string; name: string; interval: PlanInterval };
+  status: string;
+  starts_at: string | null;
+}
+
 interface BackendSubscriptionSummary {
   plan: { id: string; name: string; interval: PlanInterval };
   status: string | null;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
+  upcoming_subscription?: BackendUpcomingSubscription | null;
 }
 
 interface BackendUsageSummary {
@@ -60,9 +67,17 @@ function mapSubscriptionSummary(summary: BackendSubscriptionSummary): Subscripti
     plan: summary.plan,
     status: summary.status,
     currentPeriodEnd: summary.current_period_end,
-    cancelAtPeriodEnd: summary.cancel_at_period_end
+    cancelAtPeriodEnd: summary.cancel_at_period_end,
+    upcomingSubscription: summary.upcoming_subscription
+      ? {
+          plan: summary.upcoming_subscription.plan,
+          status: summary.upcoming_subscription.status,
+          startsAt: summary.upcoming_subscription.starts_at
+        }
+      : null
   };
 }
+
 
 function mapUsageSummary(usage: BackendUsageSummary): UsageSummary {
   return {
@@ -93,6 +108,21 @@ export async function createCheckoutSession(client: ApiClient, planId: string): 
   return response.url;
 }
 
+export async function schedulePlanSwitch(client: ApiClient, planId: string): Promise<string> {
+  const response = await client.request<{ url: string }>("/api/billing/schedule-switch", {
+    method: "POST",
+    body: JSON.stringify({ plan_id: planId })
+  });
+  return response.url;
+}
+
+export async function switchPlan(client: ApiClient, planId: string): Promise<string> {
+  const response = await client.request<{ url: string }>("/api/billing/switch", {
+    method: "POST",
+    body: JSON.stringify({ plan_id: planId })
+  });
+  return response.url;
+}
 export async function createPortalSession(client: ApiClient): Promise<string> {
   const response = await client.request<{ url: string }>("/api/billing/portal", {
     method: "POST"

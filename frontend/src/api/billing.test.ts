@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiClient } from "./client";
-import { createCheckoutSession, createPortalSession, getBillingMe, getDashboard, getPlans, getUsage } from "./billing";
+import { createCheckoutSession, createPortalSession, getBillingMe, getDashboard, getPlans, getUsage, switchPlan } from "./billing";
 
 const backendPlan = {
   id: "pro_monthly",
@@ -69,7 +69,8 @@ describe("billing API helpers", () => {
       plan: { id: "pro_monthly", name: "Pro Monthly", interval: "month" },
       status: "active",
       currentPeriodEnd: "2026-08-01T00:00:00Z",
-      cancelAtPeriodEnd: false
+      cancelAtPeriodEnd: false,
+      upcomingSubscription: null
     });
     expect(capture.url).toBe("/api/billing/me");
   });
@@ -84,6 +85,15 @@ describe("billing API helpers", () => {
     expect(capture.init?.body).toBe(JSON.stringify({ plan_id: "pro_monthly" }));
   });
 
+  it("creates a targeted subscription switch session", async () => {
+    const capture: { url?: string; init?: RequestInit } = {};
+    const client = jsonClient({ url: "https://portal.stripe.test/switch" }, capture);
+
+    await expect(switchPlan(client, "pro_yearly")).resolves.toBe("https://portal.stripe.test/switch");
+    expect(capture.url).toBe("/api/billing/switch");
+    expect(capture.init?.method).toBe("POST");
+    expect(capture.init?.body).toBe(JSON.stringify({ plan_id: "pro_yearly" }));
+  });
   it("creates a portal session and returns the redirect url", async () => {
     const capture: { url?: string; init?: RequestInit } = {};
     const client = jsonClient({ url: "https://portal.stripe.test/session" }, capture);

@@ -7,7 +7,7 @@ export const SUPPORTED_UPLOAD_EXTENSIONS = [".pdf", ".docx", ".pptx", ".txt", ".
 export const UPLOAD_ACCEPT = SUPPORTED_UPLOAD_EXTENSIONS.join(",");
 
 interface UploadDropzoneProps {
-  onAccepted: (file: File) => void;
+  onAccepted: (file: File) => void | Promise<void>;
   initialProgress?: number;
 }
 
@@ -41,7 +41,10 @@ export function UploadDropzone({ onAccepted, initialProgress = 100 }: UploadDrop
     setError(null);
     setFileName(file.name);
     setProgress(initialProgress);
-    onAccepted(file);
+    void Promise.resolve(onAccepted(file)).finally(() => {
+      setFileName(null);
+      setProgress(0);
+    });
   }
 
   function onInputChange(event: ChangeEvent<HTMLInputElement>) {

@@ -6,6 +6,7 @@ import { formatDate } from "../documents/status";
 interface ChatHistoryProps {
   chats: ChatSummary[];
   hasMore?: boolean;
+  isLoading?: boolean;
   isLoadingMore?: boolean;
   onOpen?: (chat: ChatSummary) => void;
   onRename?: (chatId: string, title: string) => void;
@@ -18,7 +19,7 @@ export function chatTitle(chat: ChatSummary) {
   return chat.title?.trim() ? chat.title : "Untitled conversation";
 }
 
-export function ChatHistory({ chats, hasMore = false, isLoadingMore = false, onOpen, onRename, onDelete, onLoadMore, onNew }: ChatHistoryProps) {
+export function ChatHistory({ chats, hasMore = false, isLoading = false, isLoadingMore = false, onOpen, onRename, onDelete, onLoadMore, onNew }: ChatHistoryProps) {
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
@@ -80,7 +81,18 @@ export function ChatHistory({ chats, hasMore = false, isLoadingMore = false, onO
         ) : null}
       </div>
 
-      {chats.length === 0 ? (
+      {isLoading ? (
+        <div
+          role="status"
+          aria-label="Loading conversations"
+          className="flex min-h-64 items-center justify-center rounded-lg border border-teal-100 bg-white shadow-panel"
+        >
+          <p className="inline-flex items-center gap-2 text-sm font-medium text-slate-600">
+            <Loader2 size={16} className="animate-spin text-sea" aria-hidden="true" />
+            Loading conversations...
+          </p>
+        </div>
+      ) : chats.length === 0 ? (
         <div className="brand-soft-surface rounded-lg border border-dashed border-teal-200 p-8 text-center shadow-panel">
           <h2 className="text-xl font-semibold text-ink">No conversations yet</h2>
           <p className="mt-2 text-sm text-slate-600">Start a conversation across one or more documents, or open a document and ask questions.</p>

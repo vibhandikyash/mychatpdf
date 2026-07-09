@@ -36,11 +36,11 @@ class Settings(BaseSettings):
     openai_embedding_batch_size: int = Field(default=64, ge=1, le=2048)
     openai_request_max_retries: int = Field(default=3, ge=1, le=10)
     openai_retry_initial_seconds: float = Field(default=0.5, ge=0)
-    openai_chat_model: str = "gpt-4.1-mini"
+    openai_chat_model: str = "gpt-5.1"
     openai_fast_model: str = "gpt-4.1-mini"
-    openai_quality_model: str = "gpt-4.1"
+    openai_quality_model: str = "gpt-5.1"
     openai_chat_temperature: float | None = Field(default=None, ge=0, le=2)
-    openai_allowed_chat_models: str = "gpt-4.1-mini,gpt-4.1,o4-mini"
+    openai_allowed_chat_models: str = "gpt-5.1,gpt-4.1-mini"
 
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None
@@ -59,6 +59,7 @@ class Settings(BaseSettings):
 
     max_upload_mb: int = Field(default=20, ge=1)
     max_pdf_pages: int = Field(default=300, ge=1)
+    document_preview_conversion_timeout_seconds: int = Field(default=90, ge=5)
     redis_url: str = "redis://redis:6379/0"
     log_level: str = "INFO"
 

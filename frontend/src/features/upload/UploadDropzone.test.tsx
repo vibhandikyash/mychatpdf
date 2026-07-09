@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -43,15 +43,35 @@ describe("UploadDropzone", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/unsupported file type\. upload a pdf, docx, pptx, txt, or rtf file/i);
   });
 
-  it("shows upload progress when a valid PDF is accepted", async () => {
+  it("shows upload progress while the upload is in flight", async () => {
     const user = userEvent.setup();
 
-    render(<UploadDropzone onAccepted={() => undefined} initialProgress={42} />);
+    render(<UploadDropzone onAccepted={() => new Promise(() => undefined)} initialProgress={42} />);
 
     const input = screen.getByLabelText(/choose file/i);
     await user.upload(input, new File(["%PDF"], "report.pdf", { type: "application/pdf" }));
 
     expect(screen.getByRole("progressbar", { name: /upload progress/i })).toHaveAttribute("aria-valuenow", "42");
+  });
+
+  it("clears the progress indicator once the upload settles", async () => {
+    const user = userEvent.setup();
+    let finishUpload = () => undefined as void;
+    const onAccepted = () =>
+      new Promise<void>((resolve) => {
+        finishUpload = resolve;
+      });
+
+    render(<UploadDropzone onAccepted={onAccepted} initialProgress={42} />);
+
+    await user.upload(screen.getByLabelText(/choose file/i), new File(["%PDF"], "report.pdf", { type: "application/pdf" }));
+    expect(screen.getByRole("progressbar", { name: /upload progress/i })).toBeInTheDocument();
+
+    finishUpload();
+
+    await waitFor(() => {
+      expect(screen.queryByRole("progressbar", { name: /upload progress/i })).not.toBeInTheDocument();
+    });
   });
 
   it("rejects files larger than 20 MB before upload", async () => {

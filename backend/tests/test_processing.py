@@ -99,10 +99,22 @@ class FailingInsightVectorService(RecordingVectorService):
 class StaticStorage:
     def __init__(self, data: bytes):
         self.data = data
+        self.preview_pdf = None
 
     def download_pdf(self, _document):
         return self.data
 
+    def upload_preview_pdf(self, _document, content: bytes):
+        self.preview_pdf = content
+
+class StaticPreviewConverter:
+    def __init__(self, preview_pdf: bytes):
+        self.preview_pdf = preview_pdf
+        self.calls = []
+
+    def convert_to_pdf(self, data: bytes, document_format: str) -> bytes:
+        self.calls.append({"data": data, "format": document_format})
+        return self.preview_pdf
 
 def _blank_pdf_bytes(page_count: int) -> bytes:
     import fitz
@@ -112,6 +124,14 @@ def _blank_pdf_bytes(page_count: int) -> bytes:
         pdf.new_page()
     return pdf.tobytes()
 
+def _text_pdf_bytes(*page_texts: str) -> bytes:
+    import fitz
+
+    pdf = fitz.open()
+    for text in page_texts:
+        page = pdf.new_page()
+        page.insert_text((72, 72), text)
+    return pdf.tobytes()
 
 def _document_with_job(db_session, clerk_id: str, **overrides) -> tuple[Document, ProcessingJob]:
     user = User(clerk_user_id=clerk_id, email=f"{clerk_id}@example.com")
@@ -320,6 +340,28 @@ def test_chunk_pages_splits_long_pages_with_token_overlap(db_session):
     assert [chunk.page_start for chunk in chunks] == [3, 3]
 
 
+def test_document_text_extractor_stores_preview_pdf_and_extracts_rendered_pages(db_session):
+    document, _job = _document_with_job(
+        db_session,
+        "user_preview_extract",
+        original_filename="brief.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        format="docx",
+        wasabi_object_key="users/user/documents/doc/original.docx",
+    )
+    preview_pdf = _text_pdf_bytes("Rendered first page text", "Rendered second page text")
+    storage = StaticStorage(b"original docx bytes")
+    converter = StaticPreviewConverter(preview_pdf)
+
+    pages = DocumentTextExtractor(storage, converter).extract_pages(document)
+
+    assert converter.calls == [{"data": b"original docx bytes", "format": "docx"}]
+    assert storage.preview_pdf == preview_pdf
+    assert [page.page_number for page in pages] == [1, 2]
+    assert "Rendered first page text" in pages[0].text
+    assert "Rendered second page text" in pages[1].text
+    assert document.page_count == 2
+
 def test_processing_fails_before_embedding_when_pdf_exceeds_page_limit(db_session):
     user = User(clerk_user_id="user_page_limit", email="limit@example.com")
     document = Document(
@@ -481,3 +523,7 @@ def test_unsupported_file_processing_marks_document_and_job_failed(db_session):
     assert "could not be opened" in document.failure_message
     assert job.status == ProcessingJobStatus.FAILED
     assert job.error_code == "unsupported_file"
+
+
+
+

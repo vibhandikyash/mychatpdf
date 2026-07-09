@@ -307,7 +307,7 @@ export function FolderView({
         </div>
       )}
 
-      <UploadDropzone onAccepted={(file) => void handleUpload(file)} initialProgress={72} />
+      <UploadDropzone onAccepted={handleUpload} initialProgress={72} />
     </section>
   );
 }

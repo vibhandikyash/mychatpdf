@@ -14,6 +14,7 @@ import { PdfViewerControls } from "./PdfViewerControls";
 import { NativePdfPreview, PdfLoadFailure, PdfOpeningNotice, PdfPreviewSkeleton } from "./PdfViewerStates";
 import { createPdfDiagnostic, reportPdfDiagnostic } from "./pdfDiagnostics";
 import { clampPage, createNativePdfUrl, readPdfSelection } from "./pdfSelection";
+import { isProcessingStatus } from "./status";
 import { usePdfPageScroll } from "./usePdfPageScroll";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
@@ -35,6 +36,11 @@ interface PdfViewerProps {
 
 type ViewerState = "idle" | "loading" | "loaded" | "failed";
 type ViewerMode = "pdfjs" | "native";
+
+const INITIAL_FIT_MIN_ZOOM = 40;
+const INITIAL_FIT_MAX_ZOOM = 100;
+const PDF_VIEWER_HORIZONTAL_CHROME_PX = 80;
+const PREVIEW_READY_RETRY_MS = 2500;
 
 export function PdfViewer({
   document,
@@ -58,10 +64,12 @@ export function PdfViewer({
   const [reloadVersion, setReloadVersion] = useState(0);
   const [selection, setSelection] = useState<PdfSelection | null>(null);
   const [copyStatus, setCopyStatus] = useState<PdfSelectionCopyStatus>("idle");
+  const [fitZoomDocumentUrl, setFitZoomDocumentUrl] = useState<string | null>(null);
 
   const resolvedTotalPages = Math.max(1, pdfDocument?.numPages ?? totalPages);
   const currentPage = clampPage(activePage, resolvedTotalPages);
   const canUseNativePreview = !document.pdfHttpHeaders || Object.keys(document.pdfHttpHeaders).length === 0;
+  const isPreviewPreparing = isProcessingStatus(document.status);
   const scale = useMemo(() => (zoom / 100) * PAGE_RENDER_SCALE, [zoom]);
   const { prepareForScaleChange, resetScrollKey, scrollContainerRef, setPageRef } = usePdfPageScroll({
     currentPage,
@@ -90,6 +98,7 @@ export function PdfViewer({
     }
 
     let cancelled = false;
+    let retryTimer: number | undefined;
     const loadingTask = pdfjs.getDocument({
       url: document.signedPdfUrl,
       httpHeaders: document.pdfHttpHeaders,
@@ -120,8 +129,15 @@ export function PdfViewer({
           return;
         }
 
-        setViewerState("failed");
         const message = getErrorMessage(error);
+        if (isPreviewPreparing) {
+          setViewerState("loading");
+          setLoadError(null);
+          retryTimer = window.setTimeout(() => setReloadVersion((current) => current + 1), PREVIEW_READY_RETRY_MS);
+          return;
+        }
+
+        setViewerState("failed");
         setLoadError(message);
         reportPdfDiagnostic(
           createPdfDiagnostic({
@@ -137,10 +153,62 @@ export function PdfViewer({
 
     return () => {
       cancelled = true;
+      if (retryTimer) {
+        window.clearTimeout(retryTimer);
+      }
       void loadingTask.destroy();
       setPdfDocument(null);
     };
-  }, [document.pdfHttpHeaders, document.signedPdfUrl, onTotalPagesChange, reloadVersion, resetScrollKey]);
+  }, [document.id, document.pdfHttpHeaders, document.signedPdfUrl, isPreviewPreparing, onTotalPagesChange, reloadVersion, resetScrollKey]);
+  useEffect(() => {
+    setFitZoomDocumentUrl(null);
+  }, [document.signedPdfUrl]);
+
+  useEffect(() => {
+    if (!pdfDocument || viewerMode !== "pdfjs" || !document.signedPdfUrl || fitZoomDocumentUrl === document.signedPdfUrl) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function fitInitialZoomToPane() {
+      const scrollContainer = scrollContainerRef.current;
+      if (!scrollContainer) {
+        return;
+      }
+
+      try {
+        const firstPage = await pdfDocument.getPage(1);
+        if (cancelled) {
+          return;
+        }
+
+        const viewport = firstPage.getViewport({ scale: 1 });
+        const availableWidth = Math.max(240, scrollContainer.clientWidth - PDF_VIEWER_HORIZONTAL_CHROME_PX);
+        const fittedZoom = clampNumber(
+          Math.floor((availableWidth / (viewport.width * PAGE_RENDER_SCALE)) * 100),
+          INITIAL_FIT_MIN_ZOOM,
+          INITIAL_FIT_MAX_ZOOM
+        );
+
+        setFitZoomDocumentUrl(document.signedPdfUrl);
+        if (Math.abs(fittedZoom - zoom) > 1) {
+          prepareForScaleChange();
+          onZoomChange(fittedZoom);
+        }
+      } catch {
+        setFitZoomDocumentUrl(document.signedPdfUrl);
+      }
+    }
+
+    window.requestAnimationFrame(() => {
+      void fitInitialZoomToPane();
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [document.signedPdfUrl, fitZoomDocumentUrl, onZoomChange, pdfDocument, prepareForScaleChange, scrollContainerRef, viewerMode, zoom]);
 
   useEffect(() => {
     if (viewerMode === "native" && nativePreviewUrl) {
@@ -332,10 +400,14 @@ export function PdfViewer({
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error && error.message) {
-    return error.message;
+    return error.message.replace(/\bPDF\b/g, "preview file");
   }
 
-  return "The PDF viewer could not read the file.";
+  return "The document viewer could not read the preview file.";
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function normalizeSelectionText(text: string) {
@@ -368,3 +440,4 @@ async function writeClipboardText(text: string) {
     throw new Error("Clipboard copy failed.");
   }
 }
+

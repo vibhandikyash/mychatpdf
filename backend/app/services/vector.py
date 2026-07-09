@@ -50,14 +50,25 @@ ANSWER_SYSTEM_PROMPT = (
     "If context blocks conflict, explain the conflict and cite both pages."
 )
 MULTI_DOCUMENT_ATTRIBUTION_PROMPT = (
-    "When the context contains multiple documents, attribute each claim to its document by name. "
+    "When the context contains multiple documents, organize the answer by document whenever the user asks about "
+    "each file, each document, all files, all documents, every file, every document, or per-document findings. "
+    "Use one short section per document with the document filename as the section label, then add any cross-document "
+    "comparison only after the per-document findings. "
+    "Attribute each claim to its document by name. "
     "For comparisons, state per-document findings before the comparison."
 )
-SUMMARY_MAX_COMPLETION_TOKENS = 320
+PER_DOCUMENT_DETAIL_PROMPT = (
+    "The user is asking for a per-document answer. Do not collapse the answer into generic source-by-source notes. "
+    "Give every matched document its own concise section, synthesize the relevant teaching, lesson, finding, or point "
+    "from that document, and include enough detail to distinguish it from the other documents."
+)
+SUMMARY_MAX_COMPLETION_TOKENS = 600
 DOCUMENT_OVERVIEW_SOURCE_LIMIT = 12
 DOCUMENT_INTELLIGENCE_SOURCE_LIMIT = 80
 DOCUMENT_OVERVIEW_CONTEXT_CHAR_LIMIT = 1000
 DOCUMENT_OVERVIEW_CONTEXT_TAIL_CHARS = 400
+MULTI_DOCUMENT_RETRIEVAL_TOP_K_MIN = 16
+MULTI_DOCUMENT_CONTEXT_SOURCE_LIMIT_MIN = 12
 DOCUMENT_INTELLIGENCE_VERSION = 2
 DOCUMENT_INTELLIGENCE_MAX_COMPLETION_TOKENS = 1400
 DOCUMENT_INTELLIGENCE_FIELDS = ("summary", "key_takeaways", "action_items", "attention_points")
@@ -126,6 +137,39 @@ def question_needs_short_summary(question: str) -> bool:
     if not ("summar" in text and ("document" in text or "file" in text)):
         return False
     return not any(term in text for term in ("comprehensive", "detail", "exhaustive", "in depth", "in-depth", "thorough"))
+
+
+def question_needs_per_document_answer(question: str) -> bool:
+    text = question.lower()
+    return any(
+        phrase in text
+        for phrase in (
+            "each file",
+            "each document",
+            "all files",
+            "all documents",
+            "all the files",
+            "all the documents",
+            "all pdfs",
+            "all the pdfs",
+            "each pdf",
+            "every file",
+            "every document",
+            "every pdf",
+            "per file",
+            "per document",
+            "from each file",
+            "from each document",
+            "in each file",
+            "in each document",
+            "for each file",
+            "for each document",
+        )
+    )
+
+
+def multi_document_context_source_limit(configured_limit: int) -> int:
+    return max(configured_limit, MULTI_DOCUMENT_CONTEXT_SOURCE_LIMIT_MIN)
 
 
 def is_front_matter_chunk(chunk: DocumentChunk, total_chunks: int) -> bool:
@@ -346,6 +390,11 @@ class VectorService:
 
     def query_scope(self, user: User, documents: list[Document], question: str) -> list[RetrievedSource]:
         filename_by_document_id = {str(document.id): document.original_filename for document in documents}
+        source_limit = self.settings.max_context_sources
+        top_k = self.settings.retrieval_top_k
+        if len(documents) > 1:
+            source_limit = multi_document_context_source_limit(source_limit)
+            top_k = max(top_k, MULTI_DOCUMENT_RETRIEVAL_TOP_K_MIN, source_limit)
         if self.settings.openai_api_key and self.settings.pinecone_api_key:
             from pinecone import Pinecone
 
@@ -354,7 +403,7 @@ class VectorService:
             response = index.query(
                 vector=question_vector,
                 namespace=self.settings.pinecone_namespace,
-                top_k=self.settings.retrieval_top_k,
+                top_k=top_k,
                 include_metadata=True,
                 filter={"user_id": str(user.id), "document_id": {"$in": list(filename_by_document_id)}},
             )
@@ -387,7 +436,7 @@ class VectorService:
             ]
 
         if len(documents) > 1:
-            return _fair_scope_selection(sources, self.settings.max_context_sources)
+            return _fair_scope_selection(sources, source_limit)
         return sources
 
     def delete_document_vectors(self, user: User, document: Document) -> None:
@@ -460,6 +509,8 @@ class VectorService:
         system_prompt = ANSWER_SYSTEM_PROMPT
         if multi_document:
             system_prompt = f"{ANSWER_SYSTEM_PROMPT} {MULTI_DOCUMENT_ATTRIBUTION_PROMPT}"
+        if multi_document and question_needs_per_document_answer(question):
+            system_prompt = f"{system_prompt} {PER_DOCUMENT_DETAIL_PROMPT}"
         client = OpenAI(api_key=self.settings.openai_api_key)
         request: dict[str, object] = {
             "model": model or self.settings.openai_chat_model,
@@ -483,6 +534,7 @@ class VectorService:
                         "- Format the answer with short paragraphs or bullet lists when it improves readability.\n"
                         "- For whole-document summaries, cover the major themes across the document instead of one narrow section.\n"
                         "- For plain whole-document summary requests, return exactly 5 short bullets, no intro or closing paragraph, about 150 words total unless the user asks for detail.\n"
+                        "- If the user asks about each file, each document, all files, all documents, every file, every document, or per-document findings, do not apply the short-summary limit; use one concise section per document.\n"
                         "- For attention or focus questions, answer as a practical checklist of what matters most in the document.\n"
                         "- Put page citations on the same sentence or bullet as the claim they support.\n"
                         "- Use LaTeX for equations when it improves readability.\n"
@@ -494,7 +546,7 @@ class VectorService:
         }
         if self.settings.openai_chat_temperature is not None:
             request["temperature"] = self.settings.openai_chat_temperature
-        if question_needs_short_summary(question):
+        if question_needs_short_summary(question) and not question_needs_per_document_answer(question):
             request["max_completion_tokens"] = SUMMARY_MAX_COMPLETION_TOKENS
         stream = client.chat.completions.create(**request)
         for event in stream:

@@ -15,14 +15,17 @@ import {
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { Columns2, FileText, GripVertical, Loader2, MessageCircle, SendHorizontal, Square } from "lucide-react";
+import type { ApiClient } from "../../api/client";
 import { ChatMessage, ChatModelTier, Citation, DocumentFormat, WorkspaceDocument } from "../../types";
 import { chatModelTier, FastQualityToggle } from "../chats/FastQualityToggle";
 import { citationPageLabel, documentStatusLabel, isProcessingStatus } from "./status";
 import type { PdfSelectionAction } from "./PdfSelectionToolbar";
+import { TextPreview } from "./TextPreview";
 
 const PdfViewer = lazy(() => import("./PdfViewer").then((module) => ({ default: module.PdfViewer })));
 
 interface DocumentWorkspaceProps {
+  api?: ApiClient | null;
   document: WorkspaceDocument;
   messages: ChatMessage[];
   chatModel?: string | null;
@@ -50,6 +53,7 @@ const RESIZER_KEYBOARD_STEP = 3;
 type WorkspaceViewMode = "pdf" | "split" | "chat";
 
 export function DocumentWorkspace({
+  api = null,
   document,
   messages,
   chatModel,
@@ -60,7 +64,8 @@ export function DocumentWorkspace({
 }: DocumentWorkspaceProps) {
   const documentPageCount = document.pageCount ?? 1;
   const documentFormat: DocumentFormat = document.format ?? "pdf";
-  const isPdfDocument = documentFormat === "pdf";
+  const canUsePdfPreview = documentFormat !== "txt";
+  const isTextPreviewDocument = documentFormat === "txt";
   const [activePage, setActivePage] = useState(1);
   const [zoom, setZoom] = useState(100);
   const [viewerPageCount, setViewerPageCount] = useState(documentPageCount);
@@ -355,7 +360,7 @@ export function DocumentWorkspace({
             showPdfOnDesktop ? "lg:block" : "lg:hidden"
           } h-full min-h-0 bg-slate-100 ${showChatOnDesktop && !isSplitView ? "lg:border-r lg:border-slate-200" : ""}`}
         >
-          {isPdfDocument ? (
+          {canUsePdfPreview ? (
             <Suspense fallback={<PdfViewerFallback />}>
               <PdfViewer
                 document={document}
@@ -372,6 +377,15 @@ export function DocumentWorkspace({
                 isSelectionActionDisabled={!isReady || isGenerating}
               />
             </Suspense>
+          ) : isTextPreviewDocument ? (
+            <TextPreview
+              api={api}
+              document={document}
+              activePage={activePage}
+              scrollRequestId={pdfScrollRequestId}
+              activeSource={activeSource}
+              onTotalPagesChange={updateTotalPages}
+            />
           ) : (
             <NonPdfPreviewPlaceholder filename={document.originalFilename} format={documentFormat} />
           )}
@@ -447,8 +461,8 @@ export function DocumentWorkspace({
               {orderedMessages.map((message) => (
                 <article
                   key={message.id}
-                  className={`rounded-lg border px-4 py-3 ${
-                    message.role === "user" ? "brand-gradient ml-auto max-w-[88%] border-transparent text-white shadow-sm" : "mr-auto max-w-[92%] border-slate-200 bg-white text-ink"
+                  className={`rounded-lg border px-4 py-3 break-words ${
+                    message.role === "user" ? "brand-gradient ml-auto w-fit max-w-[88%] border-transparent text-white shadow-sm" : "mr-auto max-w-[92%] border-slate-200 bg-white text-ink"
                   }`}
                 >
                   {message.role === "assistant" && !message.content && message.id === streamingAssistant?.id ? (
@@ -494,6 +508,12 @@ export function DocumentWorkspace({
                 aria-label="Ask this document"
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
                 disabled={!isReady || isGenerating}
                 rows={3}
                 placeholder={isReady ? "Ask this document..." : "Waiting for processing to finish..."}
@@ -643,7 +663,7 @@ function FormattedChatMessage({
   const textClassName = role === "user" ? "text-white" : "text-ink";
 
   return (
-    <div className={`space-y-3 text-sm leading-6 ${textClassName}`}>
+    <div className={`space-y-3 break-words text-sm leading-6 ${textClassName}`}>
       {blocks.map((block, blockIndex) => {
         if (block.type === "heading") {
           return (
@@ -1055,7 +1075,7 @@ function InlinePageReferences({
   onOpenPage: (page: number, sourceId?: string) => void;
 }) {
   return (
-    <span className="mx-1 inline-flex flex-wrap items-center gap-1 align-baseline">
+    <span className="mx-0.5 inline-flex flex-wrap items-center gap-0.5 align-baseline">
       {references.map((reference, index) => {
         const source = findSourceForPage(sources, reference.pageStart, reference.pageEnd);
         const isActive = Boolean(source?.sourceId && source.sourceId === activeSourceId);
@@ -1065,14 +1085,14 @@ function InlinePageReferences({
           <button
             key={`${reference.pageStart}-${reference.pageEnd}-${index}`}
             type="button"
-            aria-label={`Open page ${reference.pageStart} in PDF`}
+            aria-label={`Open ${reference.label} in document preview`}
             onClick={() => onOpenPage(reference.pageStart, source?.sourceId)}
-            className={`inline-flex h-6 items-center rounded-full px-2 text-[11px] font-semibold leading-none transition ${
+            className={`inline-flex h-5 items-center rounded-full px-1.5 text-[10px] font-semibold leading-none transition ${
               isUserMessage
                 ? "bg-white/15 text-white ring-1 ring-white/25 hover:bg-white/25"
                 : isActive
                   ? "brand-gradient text-white"
-                  : "bg-teal-50 text-sea ring-1 ring-teal-100 hover:bg-teal-100"
+                  : "bg-blue-50 text-blue-700 ring-1 ring-blue-100 hover:bg-blue-100"
             }`}
             title={`Open ${reference.label}`}
           >

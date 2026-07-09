@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { BadgeCheck, CreditCard, Loader2 } from "lucide-react";
+import { BadgeCheck, CreditCard, Loader2, RotateCcw } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { ApiClient, ApiError } from "../../api/client";
-import { createCheckoutSession, createPortalSession, getBillingMe, getPlans, getUsage } from "../../api/billing";
+import { createCheckoutSession, createPortalSession, getBillingMe, getPlans, getUsage, schedulePlanSwitch, switchPlan } from "../../api/billing";
 import { BillingPlan, SubscriptionSummary, UsageSummary } from "../../types";
 import { formatDate } from "../documents/status";
 import { UsageMeters } from "./UsageMeter";
@@ -21,10 +21,13 @@ function intervalLabel(interval: BillingPlan["interval"]) {
   return "Free forever";
 }
 
-function checkoutReturnState(params: URLSearchParams): "success" | "cancelled" | null {
+function checkoutReturnState(params: URLSearchParams): "success" | "scheduled" | "cancelled" | null {
   const value = params.get("checkout") ?? params.get("status");
   if (value === "success") {
     return "success";
+  }
+  if (value === "scheduled") {
+    return "scheduled";
   }
   if (value === "canceled" || value === "cancelled") {
     return "cancelled";
@@ -88,8 +91,18 @@ export function BillingPage({ api }: BillingPageProps) {
       const url = await action();
       window.location.assign(url);
     } catch (error) {
-      if (error instanceof ApiError && error.status === 503) {
+      if (error instanceof ApiError && error.status === 409) {
+        try {
+          const url = await createPortalSession(api as ApiClient);
+          window.location.assign(url);
+          return;
+        } catch {
+          setActionError("Open Manage billing to complete this subscription change.");
+        }
+      } else if (error instanceof ApiError && error.status === 503) {
         setNotConfigured(true);
+      } else if (error instanceof ApiError) {
+        setActionError(error.message);
       } else {
         setActionError("Unable to open Stripe right now. Please try again.");
       }
@@ -97,7 +110,14 @@ export function BillingPage({ api }: BillingPageProps) {
     }
   }
 
+  async function scheduleSwitch(plan: BillingPlan) {
+    await redirectTo(() => schedulePlanSwitch(api as ApiClient, plan.id), `schedule-${plan.id}`);
+  }
+
   const currentPlanId = subscription?.plan.id;
+  const upcomingSubscription = subscription?.upcomingSubscription ?? null;
+  const hasActivePaidSubscription = Boolean(subscription?.status && subscription.plan.interval);
+  const isCurrentPlanCanceling = Boolean(subscription?.cancelAtPeriodEnd);
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
@@ -110,6 +130,11 @@ export function BillingPage({ api }: BillingPageProps) {
       {returnState === "success" ? (
         <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
           Payment complete. Your plan updates as soon as Stripe confirms the subscription.
+        </div>
+      ) : null}
+      {returnState === "scheduled" ? (
+        <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          Checkout complete. Your new plan will start when your current billing period ends.
         </div>
       ) : null}
       {returnState === "cancelled" ? (
@@ -155,15 +180,33 @@ export function BillingPage({ api }: BillingPageProps) {
                   Your subscription is set to cancel at the end of this billing period and will not renew.
                 </p>
               ) : null}
-              <button
-                type="button"
-                onClick={() => void redirectTo(() => createPortalSession(api as ApiClient), null)}
-                disabled={pendingPlanId !== null}
-                className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-md border border-teal-100 px-4 text-sm font-semibold text-ink transition hover:border-sea hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <CreditCard size={17} aria-hidden="true" />
-                Manage billing
-              </button>
+              {upcomingSubscription ? (
+                <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  Next plan: {upcomingSubscription.plan.name} starts{upcomingSubscription.startsAt ? ` on ${formatDate(upcomingSubscription.startsAt)}` : " soon"}.
+                </p>
+              ) : null}
+              <div className="mt-4 flex flex-wrap gap-3">
+                {isCurrentPlanCanceling ? (
+                  <button
+                    type="button"
+                    onClick={() => void redirectTo(() => createPortalSession(api as ApiClient), "reactivate")}
+                    disabled={pendingPlanId !== null}
+                    className="brand-gradient inline-flex min-h-11 items-center gap-2 rounded-md px-4 text-sm font-semibold text-white shadow-sm transition hover:shadow-[0_12px_24px_rgba(32,104,248,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {pendingPlanId === "reactivate" ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <RotateCcw size={17} aria-hidden="true" />}
+                    Reactivate plan
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => void redirectTo(() => createPortalSession(api as ApiClient), null)}
+                  disabled={pendingPlanId !== null}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-md border border-teal-100 px-4 text-sm font-semibold text-ink transition hover:border-sea hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {pendingPlanId === "portal" ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <CreditCard size={17} aria-hidden="true" />}
+                  Manage billing
+                </button>
+              </div>
             </section>
 
             <section className="rounded-2xl border border-teal-100 bg-white p-5 shadow-panel">
@@ -188,6 +231,7 @@ export function BillingPage({ api }: BillingPageProps) {
             <div className="mt-3 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
               {plans.map((plan) => {
                 const isCurrent = plan.id === currentPlanId;
+                const isUpcoming = plan.id === upcomingSubscription?.plan.id;
 
                 return (
                   <article
@@ -214,7 +258,45 @@ export function BillingPage({ api }: BillingPageProps) {
                       <li>{plan.limitStorageMb} MB storage</li>
                       <li>Up to {plan.limitDocumentScope} documents per conversation</li>
                     </ul>
-                    {plan.interval && !isCurrent ? (
+                    {plan.interval && isCurrent && isCurrentPlanCanceling ? (
+                      <button
+                        type="button"
+                        onClick={() => void redirectTo(() => createPortalSession(api as ApiClient), "reactivate")}
+                        disabled={pendingPlanId !== null}
+                        className="brand-gradient mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-4 text-sm font-semibold text-white shadow-sm transition hover:shadow-[0_12px_24px_rgba(32,104,248,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {pendingPlanId === "reactivate" ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <RotateCcw size={17} aria-hidden="true" />}
+                        Reactivate plan
+                      </button>
+                    ) : null}
+                    {plan.interval && !isCurrent && hasActivePaidSubscription && isCurrentPlanCanceling && isUpcoming ? (
+                      <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
+                        Starts{upcomingSubscription?.startsAt ? ` on ${formatDate(upcomingSubscription.startsAt)}` : " soon"}
+                      </p>
+                    ) : null}
+                    {plan.interval && !isCurrent && hasActivePaidSubscription && isCurrentPlanCanceling && !isUpcoming ? (
+                      <button
+                        type="button"
+                        onClick={() => void scheduleSwitch(plan)}
+                        disabled={pendingPlanId !== null}
+                        className="brand-gradient mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-4 text-sm font-semibold text-white shadow-sm transition hover:shadow-[0_12px_24px_rgba(32,104,248,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {pendingPlanId === `schedule-${plan.id}` ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : null}
+                        Choose this plan
+                      </button>
+                    ) : null}
+                    {plan.interval && !isCurrent && hasActivePaidSubscription && !isCurrentPlanCanceling ? (
+                      <button
+                        type="button"
+                        onClick={() => void redirectTo(() => switchPlan(api as ApiClient, plan.id), `switch-${plan.id}`)}
+                        disabled={pendingPlanId !== null}
+                        className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-teal-100 px-4 text-sm font-semibold text-ink transition hover:border-sea hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {pendingPlanId === `switch-${plan.id}` ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <CreditCard size={17} aria-hidden="true" />}
+                        Choose this plan
+                      </button>
+                    ) : null}
+                    {plan.interval && !isCurrent && !hasActivePaidSubscription ? (
                       <button
                         type="button"
                         onClick={() => void redirectTo(() => createCheckoutSession(api as ApiClient, plan.id), plan.id)}

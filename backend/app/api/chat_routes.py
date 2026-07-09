@@ -11,6 +11,7 @@ from app.api.pagination import decode_cursor, encode_cursor
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.models import Chat, Document, DocumentStatus, Folder, Message, MessageSource, User
+from app.models.mixins import utc_now
 from app.services.billing import get_active_plan
 from app.services.chat import create_chat, folder_scope, stream_chat_response
 from app.services.usage import check_model_allowed, check_scope_size
@@ -106,7 +107,7 @@ def list_chats(
     statement = (
         select(Chat)
         .options(selectinload(Chat.documents), selectinload(Chat.folder).selectinload(Folder.documents))
-        .where(Chat.user_id == current_user.id)
+        .where(Chat.user_id == current_user.id, Chat.deleted_at.is_(None))
         .order_by(Chat.created_at.desc(), Chat.id.desc())
         .limit(limit + 1)
     )
@@ -228,7 +229,7 @@ def delete_chat(
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
     chat = get_owned_chat(db, current_user, chat_id)
-    db.delete(chat)
+    chat.deleted_at = utc_now()
     db.commit()
     return {"status": "deleted"}
 

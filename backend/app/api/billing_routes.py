@@ -8,7 +8,7 @@ from app.api.deps import get_current_user
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.models import Plan, User
-from app.services.billing import get_billing_service, subscription_summary
+from app.services.billing import get_active_subscription, get_billing_service, subscription_summary
 from app.services.usage import usage_summary
 
 router = APIRouter()
@@ -60,11 +60,88 @@ def create_checkout_session(
         raise HTTPException(status_code=422, detail="Unknown plan")
     if plan.interval is None:
         raise HTTPException(status_code=422, detail="Plan cannot be purchased")
+    if get_active_subscription(db, current_user) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Use the billing portal to manage an existing subscription",
+        )
     price_id = service.price_id_for_plan(plan.id)
     if price_id is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=BILLING_NOT_CONFIGURED_DETAIL)
     return {"url": service.create_checkout_session_url(db, current_user, price_id)}
 
+
+@router.post("/api/billing/schedule-switch")
+def schedule_subscription_switch(
+    payload: dict[str, object],
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, str]:
+    service = get_billing_service(settings)
+    if not service.is_configured():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=BILLING_NOT_CONFIGURED_DETAIL)
+    plan_id = payload.get("plan_id")
+    plan = db.get(Plan, plan_id) if isinstance(plan_id, str) else None
+    if plan is None or not plan.is_active:
+        raise HTTPException(status_code=422, detail="Unknown plan")
+    if plan.interval is None:
+        raise HTTPException(status_code=422, detail="Plan cannot be purchased")
+
+    subscription = get_active_subscription(db, current_user)
+    if subscription is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Use checkout to start a paid plan")
+    if subscription.plan_id == plan.id:
+        raise HTTPException(status_code=422, detail="Plan is already current")
+    if not subscription.cancel_at_period_end:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancel the current subscription before scheduling a replacement plan",
+        )
+
+    price_id = service.price_id_for_plan(plan.id)
+    if price_id is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=BILLING_NOT_CONFIGURED_DETAIL)
+    try:
+        url = service.create_future_checkout_session_url(db, current_user, subscription, plan, price_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"url": url}
+
+@router.post("/api/billing/switch")
+def switch_subscription_plan(
+    payload: dict[str, object],
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, str]:
+    service = get_billing_service(settings)
+    if not service.is_configured():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=BILLING_NOT_CONFIGURED_DETAIL)
+    plan_id = payload.get("plan_id")
+    plan = db.get(Plan, plan_id) if isinstance(plan_id, str) else None
+    if plan is None or not plan.is_active:
+        raise HTTPException(status_code=422, detail="Unknown plan")
+    if plan.interval is None:
+        raise HTTPException(status_code=422, detail="Plan cannot be purchased")
+
+    subscription = get_active_subscription(db, current_user)
+    if subscription is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Use checkout to start a paid plan")
+    if subscription.plan_id == plan.id:
+        raise HTTPException(status_code=422, detail="Plan is already current")
+    if subscription.cancel_at_period_end:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Use scheduled checkout for subscriptions ending this period",
+        )
+
+    current_plan = db.get(Plan, subscription.plan_id)
+    current_plan_name = current_plan.name if current_plan else "your current plan"
+    raise HTTPException(
+        status_code=422,
+        detail=f"You already have {current_plan_name} enabled. Cancel it to choose {plan.name}.",
+    )
 
 @router.post("/api/billing/portal")
 def create_portal_session(

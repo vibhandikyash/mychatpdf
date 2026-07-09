@@ -21,9 +21,12 @@ from app.models import (
     ProcessingJobStatus,
     User,
 )
+from app.models import DocumentChunk
 from app.models.mixins import utc_now
 from app.services.chat import get_or_create_chat, stream_chat_response
-from app.services.storage import StorageService, build_document_object_key, get_storage_service
+from app.services.preview import PREVIEW_PDF_FORMATS, DocumentPreviewConverter
+from app.services.processing import DEFAULT_CHUNK_OVERLAP_TOKENS, UnsupportedFileError
+from app.services.storage import build_document_object_key, get_storage_service
 from app.services.usage import check_and_increment, check_storage
 from app.services.vector import VectorService, get_vector_service
 from app.worker import enqueue_document_processing
@@ -40,6 +43,10 @@ def _inline_pdf_disposition(filename: str) -> str:
     safe_filename = filename.replace("\\", "_").replace('"', "'")
     return f'inline; filename="{safe_filename}"'
 
+
+def _preview_pdf_filename(filename: str) -> str:
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return f"{stem}.pdf"
 
 @router.get("/health")
 def health() -> dict[str, str]:
@@ -92,7 +99,6 @@ def _document_summary(document: Document) -> dict[str, object]:
         "failure_message": document.failure_message,
     }
 
-
 DOCUMENT_LIST_DEFAULT_LIMIT = 50
 DOCUMENT_LIST_MAX_LIMIT = 100
 
@@ -138,7 +144,6 @@ def list_documents(
     )
     return {"items": [_document_summary(document) for document in visible_documents], "next_cursor": next_cursor}
 
-
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 
 # extension -> (format, canonical content type). Browsers are inconsistent, so a
@@ -150,7 +155,8 @@ UPLOAD_FORMATS: dict[str, tuple[str, str]] = {
     ".txt": ("txt", "text/plain"),
     ".rtf": ("rtf", "application/rtf"),
 }
-EXTRA_UPLOAD_CONTENT_TYPES: dict[str, set[str]] = {"rtf": {"text/rtf"}}
+# Windows registers .rtf as application/msword, so that's what Chrome/Edge send.
+EXTRA_UPLOAD_CONTENT_TYPES: dict[str, set[str]] = {"rtf": {"text/rtf", "application/msword", "text/richtext"}}
 GENERIC_UPLOAD_CONTENT_TYPES = {"", "application/octet-stream"}
 UNSUPPORTED_UPLOAD_DETAIL = "Unsupported file type. Upload a PDF, DOCX, PPTX, TXT, or RTF file."
 
@@ -170,7 +176,6 @@ def _resolve_upload_format(file: UploadFile) -> tuple[str, str]:
     if content_type == canonical_type or content_type in EXTRA_UPLOAD_CONTENT_TYPES.get(document_format, set()):
         return document_format, content_type
     raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=UNSUPPORTED_UPLOAD_DETAIL)
-
 
 async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
     chunks = bytearray()
@@ -357,6 +362,50 @@ def document_file_url(
     return get_storage_service(settings).signed_file_url(document)
 
 
+@router.get("/api/documents/{document_id}/preview-file")
+def document_preview_file(
+    document_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    document = get_owned_document(db, current_user, document_id)
+    storage_service = get_storage_service(settings)
+    document_format = document.format or "pdf"
+    if document_format == "pdf":
+        preview_bytes = storage_service.download_pdf(document)
+        preview_filename = document.original_filename
+    elif document_format in PREVIEW_PDF_FORMATS:
+        preview_bytes = storage_service.download_preview_pdf(document)
+        preview_filename = _preview_pdf_filename(document.original_filename)
+        if not preview_bytes and document.status == DocumentStatus.READY:
+            original_bytes = storage_service.download_pdf(document)
+            if original_bytes:
+                try:
+                    preview_bytes = DocumentPreviewConverter(
+                        timeout_seconds=settings.document_preview_conversion_timeout_seconds
+                    ).convert_to_pdf(original_bytes, document_format)
+                    try:
+                        storage_service.upload_preview_pdf(document, preview_bytes)
+                    except Exception:
+                        logger.exception("Document preview PDF could not be cached", extra={"document_id": str(document.id)})
+                except UnsupportedFileError:
+                    logger.info("Document preview PDF could not be generated", extra={"document_id": str(document.id)})
+    else:
+        raise HTTPException(status_code=404, detail="Preview PDF is not available for this file type")
+
+    if not preview_bytes:
+        raise HTTPException(status_code=404, detail="Preview PDF is not available")
+
+    return StreamingResponse(
+        BytesIO(preview_bytes),
+        media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": _inline_pdf_disposition(preview_filename),
+        },
+    )
+
 @router.get("/api/documents/{document_id}/file")
 def document_file(
     document_id: UUID,
@@ -377,6 +426,50 @@ def document_file(
             "Content-Disposition": _inline_pdf_disposition(document.original_filename),
         },
     )
+
+
+@router.get("/api/documents/{document_id}/pages")
+def document_pages(
+    document_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Extracted text grouped by page/section for the workspace preview.
+
+    Chunks are stored with a sliding window (overlap=DEFAULT_CHUNK_OVERLAP_TOKENS),
+    so joining chunks on the same page would repeat the overlap. Drop those
+    tokens from every chunk after the first on each page."""
+    document = get_owned_document(db, current_user, document_id)
+    chunks = db.scalars(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document.id)
+        .order_by(DocumentChunk.chunk_index)
+    ).all()
+
+    pages: list[dict[str, object]] = []
+    current_page: int | None = None
+    current_tokens: list[str] = []
+
+    def flush() -> None:
+        if current_page is None:
+            return
+        pages.append({"page_number": current_page, "text": " ".join(current_tokens).strip()})
+
+    for chunk in chunks:
+        chunk_tokens = chunk.text.split()
+        if chunk.page_start != current_page:
+            flush()
+            current_page = chunk.page_start
+            current_tokens = list(chunk_tokens)
+            continue
+        current_tokens.extend(chunk_tokens[DEFAULT_CHUNK_OVERLAP_TOKENS:])
+    flush()
+
+    return {
+        "document_id": str(document.id),
+        "format": document.format,
+        "pages": pages,
+    }
 
 
 @router.get("/api/documents/{document_id}/processing-status")
@@ -439,3 +532,11 @@ def stream_document_chat(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+
+
+
+
+
+

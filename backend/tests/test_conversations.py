@@ -270,7 +270,7 @@ def test_rename_chat_rejects_title_over_512_chars(authenticated_client, db_sessi
     assert chat.title == "original"
 
 
-def test_delete_chat_removes_chat_and_messages(authenticated_client, db_session):
+def test_delete_chat_soft_deletes_and_hides_chat(authenticated_client, db_session):
     user = _authenticated_user(db_session)
     document = _ready_document(user)
     db_session.add(document)
@@ -291,6 +291,10 @@ def test_delete_chat_removes_chat_and_messages(authenticated_client, db_session)
     response = authenticated_client.delete(f"/api/chats/{chat.id}")
 
     assert response.status_code == 200
-    assert db_session.get(Chat, chat.id) is None
-    assert db_session.query(Message).count() == 0
-    assert db_session.query(ChatDocument).count() == 0
+    # Soft delete: the row survives (so the activity feed can report it) but
+    # the chat disappears from every user-facing endpoint.
+    db_session.refresh(chat)
+    assert chat.deleted_at is not None
+    assert db_session.query(Message).count() == 1
+    assert authenticated_client.get(f"/api/chats/{chat.id}").status_code == 404
+    assert authenticated_client.get("/api/chats").json()["items"] == []

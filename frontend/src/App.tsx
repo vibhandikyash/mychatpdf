@@ -56,11 +56,18 @@ const PROCESSING_POLL_MS = 2500;
 const FILE_URL_RETRY_MS = 3000;
 const DOCUMENTS_CHANGED_EVENT = "mychatpdf:documents-changed";
 const FOLDERS_CHANGED_EVENT = "mychatpdf:folders-changed";
+const CHATS_CHANGED_EVENT = "mychatpdf:chats-changed";
 
 interface DocumentsChangedDetail {
   document?: DocumentSummary;
   documents?: DocumentSummary[];
   removedDocumentId?: string;
+}
+
+interface ChatsChangedDetail {
+  chat?: ChatSummary;
+  chats?: ChatSummary[];
+  removedChatId?: string;
 }
 
 export function App() {
@@ -272,7 +279,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       void listChats(apiClient)
         .then((page) => {
           if (!cancelled) {
-            setRecentChats(page.items.slice(0, 6));
+            setRecentChats(toSidebarChats(page.items));
           }
         })
         .catch(() => undefined);
@@ -285,12 +292,37 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         .catch(() => undefined);
     }
 
+    function onChatsChanged(event: Event) {
+      const detail = readChatsChangedDetail(event);
+      if (!detail) {
+        refresh();
+        return;
+      }
+
+      if (detail.chats) {
+        setRecentChats(toSidebarChats(detail.chats));
+        return;
+      }
+
+      const changedChat = detail.chat;
+      if (changedChat) {
+        setRecentChats((current) => upsertSidebarChat(current, changedChat));
+        return;
+      }
+
+      if (detail.removedChatId) {
+        setRecentChats((current) => current.filter((chat) => chat.id !== detail.removedChatId));
+      }
+    }
+
     refresh();
     window.addEventListener(FOLDERS_CHANGED_EVENT, refresh);
+    window.addEventListener(CHATS_CHANGED_EVENT, onChatsChanged);
 
     return () => {
       cancelled = true;
       window.removeEventListener(FOLDERS_CHANGED_EVENT, refresh);
+      window.removeEventListener(CHATS_CHANGED_EVENT, onChatsChanged);
     };
   }, [api, location.pathname]);
 
@@ -693,19 +725,33 @@ function LibraryRoute() {
   const api = useAuthenticatedApiClient();
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [folders, setFolders] = useState<FolderSummary[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  async function refreshDocuments() {
+  async function refreshDocuments(options: { showLoading?: boolean } = {}) {
     if (!api) {
+      if (options.showLoading) {
+        setIsLoading(false);
+      }
       return;
     }
 
-    const nextDocuments = await listDocuments(api);
-    setDocuments(nextDocuments);
-    notifyDocumentsChanged({ documents: nextDocuments });
+    if (options.showLoading) {
+      setIsLoading(true);
+    }
+
+    try {
+      const nextDocuments = await listDocuments(api);
+      setDocuments(nextDocuments);
+      notifyDocumentsChanged({ documents: nextDocuments });
+    } finally {
+      if (options.showLoading) {
+        setIsLoading(false);
+      }
+    }
   }
 
   useEffect(() => {
-    void refreshDocuments().catch(() => undefined);
+    void refreshDocuments({ showLoading: true }).catch(() => undefined);
     if (api) {
       void listFolders(api).then(setFolders).catch(() => undefined);
     }
@@ -715,6 +761,7 @@ function LibraryRoute() {
     <DocumentLibrary
       documents={documents}
       folders={folders}
+      isLoading={isLoading}
       onOpen={(documentId) => navigate(`/app/documents/${documentId}`)}
       onMove={(documentId, folderId) => {
         if (!api) {
@@ -732,13 +779,13 @@ function LibraryRoute() {
           return;
         }
         notifyDocumentsChanged({ removedDocumentId: documentId });
-        void deleteDocument(api, documentId).then(refreshDocuments).catch(() => undefined);
+        void deleteDocument(api, documentId).then(() => refreshDocuments()).catch(() => undefined);
       }}
       onRetry={(documentId) => {
         if (!api) {
           return;
         }
-        void retryDocumentProcessing(api, documentId).then(refreshDocuments).catch(() => undefined);
+        void retryDocumentProcessing(api, documentId).then(() => refreshDocuments()).catch(() => undefined);
       }}
     />
   );
@@ -749,6 +796,7 @@ function ChatsRoute() {
   const api = useAuthenticatedApiClient();
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   useEffect(() => {
@@ -757,6 +805,7 @@ function ChatsRoute() {
     }
 
     let cancelled = false;
+    setIsLoading(true);
     void listChats(api)
       .then((page) => {
         if (!cancelled) {
@@ -764,7 +813,12 @@ function ChatsRoute() {
           setNextCursor(page.nextCursor);
         }
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
 
     return () => {
       cancelled = true;
@@ -792,6 +846,7 @@ function ChatsRoute() {
     <ChatHistory
       chats={chats}
       hasMore={Boolean(nextCursor)}
+      isLoading={isLoading}
       isLoadingMore={isLoadingMore}
       onNew={() => navigate("/app/chats/new")}
       onOpen={(chat) => navigate(`/app/chats/${chat.id}`)}
@@ -800,7 +855,10 @@ function ChatsRoute() {
           return;
         }
         void renameChat(api, chatId, title)
-          .then((updated) => setChats((current) => current.map((chat) => (chat.id === chatId ? updated : chat))))
+          .then((updated) => {
+            setChats((current) => current.map((chat) => (chat.id === chatId ? updated : chat)));
+            notifyChatsChanged({ chat: updated });
+          })
           .catch(() => undefined);
       }}
       onDelete={(chatId) => {
@@ -808,6 +866,7 @@ function ChatsRoute() {
           return;
         }
         setChats((current) => current.filter((chat) => chat.id !== chatId));
+        notifyChatsChanged({ removedChatId: chatId });
         void deleteChat(api, chatId).catch(() => undefined);
       }}
       onLoadMore={() => void loadMore()}
@@ -856,6 +915,7 @@ function NewChatRoute() {
     setErrorMessage(null);
     try {
       const chat = await createChat(api, documentIds, title);
+      notifyChatsChanged({ chat });
       navigate(`/app/chats/${chat.id}`);
     } catch (error) {
       setErrorMessage(error instanceof LimitExceededError ? error : "Unable to start this conversation right now.");
@@ -924,6 +984,14 @@ function ChatRoute() {
     };
   }, [api, chatId]);
 
+  async function handleRenameChat(title: string) {
+    if (!api || !chat) {
+      return;
+    }
+    const updated = await renameChat(api, chat.id, title);
+    setChat(updated);
+    notifyChatsChanged({ chat: updated });
+  }
   async function handleSendMessage(content: string, model: ChatModelTier) {
     if (!api || !chatId) {
       return;
@@ -988,7 +1056,7 @@ function ChatRoute() {
   return (
     <>
       <ErrorBanner error={errorMessage} />
-      <ChatView chat={chat} messages={messages} isLoading={isLoading} onSendMessage={handleSendMessage} />
+      <ChatView chat={chat} messages={messages} isLoading={isLoading} onSendMessage={handleSendMessage} onRenameChat={handleRenameChat} />
     </>
   );
 }
@@ -1263,6 +1331,7 @@ function WorkspaceRoute() {
     <>
       <ErrorBanner error={errorMessage} />
       <DocumentWorkspace
+        api={api}
         document={document}
         messages={messages}
         chatModel={chatModel}
@@ -1287,6 +1356,10 @@ function notifyFoldersChanged() {
   window.dispatchEvent(new Event(FOLDERS_CHANGED_EVENT));
 }
 
+function notifyChatsChanged(detail: ChatsChangedDetail) {
+  window.dispatchEvent(new CustomEvent<ChatsChangedDetail>(CHATS_CHANGED_EVENT, { detail }));
+}
+
 function readDocumentsChangedDetail(event: Event): DocumentsChangedDetail | null {
   if (!(event instanceof CustomEvent) || !event.detail || typeof event.detail !== "object") {
     return null;
@@ -1295,12 +1368,28 @@ function readDocumentsChangedDetail(event: Event): DocumentsChangedDetail | null
   return event.detail as DocumentsChangedDetail;
 }
 
+function readChatsChangedDetail(event: Event): ChatsChangedDetail | null {
+  if (!(event instanceof CustomEvent) || !event.detail || typeof event.detail !== "object") {
+    return null;
+  }
+
+  return event.detail as ChatsChangedDetail;
+}
+
 function toSidebarDocuments(documents: DocumentSummary[]) {
   return [...documents].sort(compareRecentDocuments);
 }
 
 function upsertSidebarDocument(documents: DocumentSummary[], nextDocument: DocumentSummary) {
   return toSidebarDocuments([nextDocument, ...documents.filter((document) => document.id !== nextDocument.id)]);
+}
+
+function toSidebarChats(chats: ChatSummary[]) {
+  return chats.slice(0, 6);
+}
+
+function upsertSidebarChat(chats: ChatSummary[], nextChat: ChatSummary) {
+  return toSidebarChats([nextChat, ...chats.filter((chat) => chat.id !== nextChat.id)]);
 }
 
 function compareRecentDocuments(left: DocumentSummary, right: DocumentSummary) {
@@ -1336,7 +1425,7 @@ interface PdfAccess {
 
 async function getDocumentPreviewAccess(apiClient: ApiClient, documentId: string): Promise<PdfAccess> {
   return {
-    url: apiClient.url(`/api/documents/${documentId}/file`),
+    url: apiClient.url(`/api/documents/${documentId}/preview-file`),
     headers: await apiClient.authHeaders()
   };
 }
