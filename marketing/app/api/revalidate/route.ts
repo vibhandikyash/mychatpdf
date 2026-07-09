@@ -11,6 +11,8 @@ export async function POST(request: NextRequest) {
   if (!process.env.REVALIDATE_SECRET || secret !== process.env.REVALIDATE_SECRET) {
     return Response.json({ error: "Invalid secret." }, { status: 401 });
   }
-  revalidateTag(CMS_TAG, "max");
+  // Immediate expiry so a Contentful publish is visible on the next request,
+  // per the Next 16 docs' recommendation for webhook-triggered revalidation.
+  revalidateTag(CMS_TAG, { expire: 0 });
   return Response.json({ revalidated: true, tag: CMS_TAG, now: new Date().toISOString() });
 }

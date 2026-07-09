@@ -40,15 +40,25 @@ export type SectionItem = {
   quote?: string;
   author?: string;
   role?: string;
+  /** Icon key for feature cards; see components/icons.tsx SECTION_ICONS. */
+  iconKey?: string;
+  /** Stat value like "10s" or "99.9%". */
+  value?: string;
+  /** Short stat label shown under the value. */
+  label?: string;
 };
 
 export type LandingSection = {
-  variant: "hero" | "features" | "cta" | "testimonial";
+  variant: "hero" | "features" | "steps" | "stats" | "testimonial" | "logos" | "usecases" | "faq" | "cta";
   heading?: string;
   subheading?: string;
   body?: string;
+  /** Small eyebrow/badge line above the hero heading. */
+  badge?: string;
   ctaLabel?: string;
   ctaUrl?: string;
+  secondaryCtaLabel?: string;
+  secondaryCtaUrl?: string;
   items?: SectionItem[];
   order?: number;
 };
@@ -138,9 +148,9 @@ const f = <T>(entry: CdaEntry) => entry.fields as T;
 // ---------------------------------------------------------------------------
 
 const FALLBACK_SETTINGS: SiteSettings = {
-  siteName: "MyChatPDF",
+  siteName: "MyPDFChat",
   tagline: "Chat with your documents, with citations",
-  companyName: "MyChatPDF Inc.",
+  companyName: "MyPDFChat Inc.",
   contactEmail: "hello@mychatpdf.example",
   navItems: [
     { label: "Services", href: "/services" },
@@ -159,46 +169,209 @@ const FALLBACK_SETTINGS: SiteSettings = {
       ],
     },
   ],
-  footerText: "MyChatPDF Inc. All rights reserved.",
-  defaultSeoTitle: "MyChatPDF: Chat with PDFs and documents",
+  footerText: "MyPDFChat Inc. All rights reserved.",
+  defaultSeoTitle: "MyPDFChat: Chat with PDFs and documents",
   defaultSeoDescription:
     "Upload PDFs and documents, ask questions in plain language, and get answers with citations.",
 };
 
 const FALLBACK_PAGES: Record<string, Page> = {
   home: {
-    title: "MyChatPDF",
+    title: "MyPDFChat",
     slug: "home",
     sections: [
       {
         variant: "hero",
-        heading: "Chat with your documents, get answers you can check",
+        badge: "Every answer backed by a citation",
+        heading: "Chat with your documents. Get answers you can verify.",
         subheading:
-          "Upload PDFs and other documents, ask questions in plain language, and get answers with citations.",
+          "Upload PDFs, Word files, and more, then ask questions in plain language. MyPDFChat answers from your documents and cites the exact page every time.",
         ctaLabel: "Get started free",
         ctaUrl: "app:signup",
+        secondaryCtaLabel: "See how it works",
+        secondaryCtaUrl: "#how-it-works",
+        order: 1,
+      },
+      {
+        variant: "logos",
+        heading: "Built for the documents you actually work with",
+        items: [
+          { title: "Contracts" },
+          { title: "Research papers" },
+          { title: "Financial reports" },
+          { title: "Legal briefs" },
+          { title: "Technical manuals" },
+          { title: "Textbooks" },
+          { title: "Board minutes" },
+          { title: "Policy documents" },
+        ],
+        order: 2,
       },
       {
         variant: "features",
-        heading: "What you get",
+        heading: "Ask anything. Verify everything.",
+        subheading: "Six capabilities that turn a pile of documents into answers you can defend.",
         items: [
-          { title: "Chat with any document", description: "Ask questions and get direct answers from the text." },
-          { title: "Multi-document conversations", description: "Bring several files into one chat." },
-          { title: "Citations on every answer", description: "Every answer links back to the source passage." },
+          {
+            iconKey: "chat",
+            title: "Chat with any document",
+            description: "Ask questions the way you would ask a colleague and get direct answers pulled from the text.",
+          },
+          {
+            iconKey: "documents",
+            title: "Multi-document conversations",
+            description: "Bring several files into one chat. Compare drafts, cross-reference reports, study a whole reading list.",
+          },
+          {
+            iconKey: "citation",
+            title: "Citations on every answer",
+            description: "Each answer links back to the source passage and page number, so you can verify instead of trusting.",
+          },
+          {
+            iconKey: "shield",
+            title: "Private by default",
+            description: "Your documents stay in your workspace and are never used to train models. Delete a file and it is gone.",
+          },
+          {
+            iconKey: "bolt",
+            title: "Answers in seconds",
+            description: "Upload a document and start asking right away. Even long reports are ready to chat in moments.",
+          },
+          {
+            iconKey: "folder",
+            title: "Organized in folders",
+            description: "Keep projects tidy with folders and scoped conversations, so the right documents are always at hand.",
+          },
         ],
+        order: 3,
+      },
+      {
+        variant: "steps",
+        heading: "How it works",
+        subheading: "From upload to verified answer in three steps.",
+        items: [
+          { title: "Upload your documents", description: "Drag in PDFs, Word files, and more. Your files are processed securely in seconds." },
+          { title: "Ask in plain language", description: "No special syntax. Ask questions the way you would ask a colleague who read the whole thing." },
+          { title: "Verify with citations", description: "Every answer links to the exact passage and page it came from. Click through and check." },
+        ],
+        order: 4,
+      },
+      {
+        variant: "usecases",
+        heading: "Made for the way you work",
+        subheading: "Whatever the documents, the loop is the same: ask, verify, move on.",
+        items: [
+          {
+            iconKey: "citation",
+            title: "For researchers",
+            description: "Load a set of papers into one conversation and ask where they agree, where they conflict, and which methods differ.",
+          },
+          {
+            iconKey: "chat",
+            title: "For students",
+            description: "Turn readings and slides into a study partner. Ask for explanations, quiz yourself, and check every answer against the page.",
+          },
+          {
+            iconKey: "shield",
+            title: "For legal & compliance",
+            description: "Find the clause that matters, compare drafts, and keep an audit trail of what was asked and where the answers came from.",
+          },
+          {
+            iconKey: "documents",
+            title: "For analysts & teams",
+            description: "Trace trends across quarterly reports and board packs, with per-document citations keeping every claim accountable.",
+          },
+        ],
+        order: 5,
+      },
+      {
+        variant: "stats",
+        items: [
+          { value: "10s", label: "to your first answer", description: "Upload and start asking immediately." },
+          { value: "100%", label: "of answers cited", description: "Every response points to its source." },
+          { value: "3+", label: "documents per chat", description: "Cross-reference files in one conversation." },
+          { value: "24/7", label: "always available", description: "Your documents answer whenever you ask." },
+        ],
+        order: 6,
+      },
+      {
+        variant: "testimonial",
+        heading: "Loved by people who read for a living",
+        items: [
+          {
+            quote: "I stopped reading 80-page contracts line by line. I ask, I check the citation, I move on.",
+            author: "Dana M.",
+            role: "Contracts manager",
+          },
+          {
+            quote: "The citations are the feature. My advisor asks where a claim came from and I have the page number.",
+            author: "Priya S.",
+            role: "PhD candidate",
+          },
+          {
+            quote: "We load every board pack into one chat and trace decisions across a year of minutes in minutes.",
+            author: "Tom R.",
+            role: "Operations lead",
+          },
+          {
+            quote: "Folders per client, chats saved with the files. New teammates catch up on a matter by reading the conversation.",
+            author: "Elena K.",
+            role: "Paralegal",
+          },
+          {
+            quote: "I quiz myself from the textbook before every exam. Wrong answers link me straight to the section I skipped.",
+            author: "Jordan W.",
+            role: "Med student",
+          },
+          {
+            quote: "It says 'the documents do not address this' instead of making something up. That honesty is why we trust it.",
+            author: "Sam O.",
+            role: "Compliance officer",
+          },
+        ],
+        order: 7,
+      },
+      {
+        variant: "faq",
+        heading: "Questions, answered",
+        subheading: "The short version of what people ask before they try it.",
+        items: [
+          {
+            title: "What is MyPDFChat?",
+            description: "An AI document chat platform: upload PDFs or other documents, ask questions in plain language, and get answers with citations pointing to the source passage and page.",
+          },
+          {
+            title: "Is there a free plan?",
+            description: "Yes. Upload documents and chat within monthly limits, no credit card required. Paid plans raise limits and file sizes.",
+          },
+          {
+            title: "How do I know the answers are correct?",
+            description: "Every answer cites the exact passage and page. Click a citation to see the source in context, and if the documents do not contain the answer, MyPDFChat says so.",
+          },
+          {
+            title: "What happens to my documents?",
+            description: "They stay in your workspace, are never used to train AI models, and are removed from our systems when you delete them.",
+          },
+        ],
+        order: 8,
       },
       {
         variant: "cta",
-        heading: "Start chatting with your documents",
-        ctaLabel: "Try MyChatPDF free",
+        heading: "Your documents already have the answers.",
+        subheading:
+          "Upload a file, ask in plain language, and check the citation yourself — all in the next two minutes.",
+        ctaLabel: "Try MyPDFChat free",
         ctaUrl: "app:signup",
+        secondaryCtaLabel: "Talk to us",
+        secondaryCtaUrl: "/contact",
+        order: 9,
       },
     ],
   },
   about: {
-    title: "About MyChatPDF",
+    title: "About MyPDFChat",
     slug: "about",
-    body: "MyChatPDF is an AI document chat platform. Upload PDFs and other documents, ask questions, and get cited answers.",
+    body: "MyPDFChat is an AI document chat platform. Upload PDFs and other documents, ask questions, and get cited answers.",
     sections: [],
   },
 };
@@ -226,18 +399,18 @@ const FALLBACK_SERVICES: Service[] = [
 
 const FALLBACK_POSTS: BlogPost[] = [
   {
-    title: "Welcome to the MyChatPDF blog",
+    title: "Welcome to the MyPDFChat blog",
     slug: "welcome",
     excerpt: "Product news and practical tips for working with documents.",
     body: "Content is on its way. Connect the CMS to manage blog posts.",
-    author: "MyChatPDF Team",
+    author: "MyPDFChat Team",
     publishDate: "2026-01-01",
   },
 ];
 
 const FALLBACK_FAQS: FaqItem[] = [
   {
-    question: "What is MyChatPDF?",
+    question: "What is MyPDFChat?",
     answer:
       "An AI document chat platform: upload PDFs and other documents, ask questions, and get answers with citations.",
     order: 1,
@@ -287,7 +460,45 @@ export async function getPage(slug: string): Promise<Page | null> {
   const sections = resolveLinks(entry, "sections", res!)
     .map((e) => f<LandingSection>(e))
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  return { ...fields, sections };
+  return { ...fields, sections: slug === "home" ? mergeHomeSections(sections) : sections };
+}
+
+// Canonical home-page section sequence. When the CMS home page predates a
+// variant (e.g. before a reseed adds it), the fallback section fills the gap
+// so the landing page never renders as a stub; CMS content wins per variant.
+// Deliberate trade-off: the home page's cross-variant order is fixed to this
+// sequence — the CMS `order` field reorders sections within a variant only.
+const HOME_VARIANT_ORDER: LandingSection["variant"][] = [
+  "hero",
+  "logos",
+  "features",
+  "steps",
+  "usecases",
+  "stats",
+  "testimonial",
+  "faq",
+  "cta",
+];
+
+function mergeHomeSections(cmsSections: LandingSection[]): LandingSection[] {
+  const byVariant = new Map<string, LandingSection[]>();
+  for (const section of cmsSections) {
+    byVariant.set(section.variant, [...(byVariant.get(section.variant) ?? []), section]);
+  }
+  const merged: LandingSection[] = [];
+  for (const variant of HOME_VARIANT_ORDER) {
+    const fromCms = byVariant.get(variant);
+    if (fromCms) {
+      merged.push(...fromCms);
+      byVariant.delete(variant);
+    } else {
+      const fallback = FALLBACK_PAGES.home.sections.find((s) => s.variant === variant);
+      if (fallback) merged.push(fallback);
+    }
+  }
+  // CMS-defined variants outside the canonical list keep their own order.
+  merged.push(...[...byVariant.values()].flat().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
+  return merged;
 }
 
 export async function getServices(): Promise<Service[]> {
@@ -304,9 +515,10 @@ export async function getBlogPosts(): Promise<BlogPost[]> {
 
 export async function getBlogPost(slug: string): Promise<BlogPost | null> {
   const res = await cdaFetch({ content_type: "blogPost", "fields.slug": slug, limit: "1" });
-  const entry = res?.items[0];
-  if (!entry) return FALLBACK_POSTS.find((p) => p.slug === slug) ?? null;
-  return f<BlogPost>(entry);
+  // No response means no CMS (fall back); an empty result from a live CMS
+  // means the post genuinely does not exist and must 404.
+  if (!res) return FALLBACK_POSTS.find((p) => p.slug === slug) ?? null;
+  return res.items[0] ? f<BlogPost>(res.items[0]) : null;
 }
 
 export async function getFaqItems(): Promise<FaqItem[]> {
