@@ -1,6 +1,6 @@
-# MyChatPDF marketing site
+# MyPDFChat marketing site
 
-Next.js (App Router) marketing website for MyChatPDF. All content is managed in Contentful and fetched through the Delivery API, with tag-based revalidation so content edits go live without a redeploy. If CMS credentials are missing, every page renders hardcoded fallback content, so the site always builds.
+Next.js (App Router) marketing website for MyPDFChat. All content is managed in Contentful and fetched through the Delivery API, with tag-based revalidation so content edits go live without a redeploy. If CMS credentials are missing, every page renders hardcoded fallback content, so the site always builds.
 
 ## Run it
 
@@ -49,7 +49,7 @@ Every piece of managed content maps to a content type:
 
 | Managed content (FR-7) | Content type | Key fields |
 | --- | --- | --- |
-| Landing page content | `page` (slug `home`) + `landingSection` | page: `title`, `slug`, `sections`, `seoTitle`, `seoDescription`. section: `variant` (`hero`/`features`/`cta`/`testimonial`), `heading`, `subheading`, `body`, `ctaLabel`, `ctaUrl`, `items` (JSON), `order` |
+| Landing page content | `page` (slug `home`) + `landingSection` | page: `title`, `slug`, `sections`, `seoTitle`, `seoDescription`. section: `variant` (`hero`/`features`/`steps`/`stats`/`testimonial`/`logos`/`usecases`/`faq`/`cta`), `badge`, `heading`, `subheading`, `body`, `ctaLabel`, `ctaUrl`, `secondaryCtaLabel`, `secondaryCtaUrl`, `items` (JSON), `order` |
 | Service pages | `service` | `title`, `slug`, `summary`, `body`, `order`, `seoTitle`, `seoDescription` |
 | Blog articles | `blogPost` | `title`, `slug`, `excerpt`, `body`, `author`, `publishDate`, `seoTitle`, `seoDescription` |
 | FAQs | `faqItem` | `question`, `answer`, `order` |

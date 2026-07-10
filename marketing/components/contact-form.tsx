@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Reveal from "@/components/motion/reveal";
+import { CheckIcon } from "@/components/icons";
 
 type Status = "idle" | "sending" | "sent" | "error";
 
@@ -36,15 +38,22 @@ export default function ContactForm() {
 
   if (status === "sent") {
     return (
-      <div className="rounded-2xl border border-green-200 bg-green-50 p-6 text-green-800" role="status">
-        <p className="font-semibold">Message sent.</p>
-        <p className="mt-1 text-sm">Thanks for reaching out. We usually reply within one business day.</p>
-      </div>
+      <Reveal direction="zoom">
+        <div className="py-6 text-center sm:py-10" role="status">
+          <div className="bg-ice text-sea mx-auto flex h-14 w-14 items-center justify-center rounded-full">
+            <CheckIcon className="h-7 w-7" />
+          </div>
+          <p className="text-ink mt-5 text-xl font-semibold">Message sent</p>
+          <p className="mt-2 leading-relaxed text-slate-600">
+            Thanks for reaching out. We usually reply within one business day.
+          </p>
+        </div>
+      </Reveal>
     );
   }
 
   const inputClass =
-    "mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+    "mt-1.5 block w-full rounded-lg border border-slate-300 bg-white px-4 text-ink placeholder:text-slate-400 transition-colors focus:border-sea focus:ring-4 focus:ring-ice focus:outline-none";
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
@@ -52,13 +61,20 @@ export default function ContactForm() {
         <label htmlFor="name" className="block text-sm font-medium text-slate-700">
           Name
         </label>
-        <input id="name" name="name" type="text" required className={inputClass} placeholder="Your name" />
+        <input id="name" name="name" type="text" required className={`${inputClass} h-12`} placeholder="Your name" />
       </div>
       <div>
         <label htmlFor="email" className="block text-sm font-medium text-slate-700">
           Email
         </label>
-        <input id="email" name="email" type="email" required className={inputClass} placeholder="you@company.com" />
+        <input
+          id="email"
+          name="email"
+          type="email"
+          required
+          className={`${inputClass} h-12`}
+          placeholder="you@company.com"
+        />
       </div>
       <div>
         <label htmlFor="message" className="block text-sm font-medium text-slate-700">
@@ -69,7 +85,7 @@ export default function ContactForm() {
           name="message"
           required
           rows={5}
-          className={inputClass}
+          className={`${inputClass} py-3`}
           placeholder="How can we help?"
         />
       </div>
@@ -81,7 +97,7 @@ export default function ContactForm() {
       <button
         type="submit"
         disabled={status === "sending"}
-        className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
+        className="bg-brand-gradient hover:shadow-glow shadow-sea/25 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full px-7 text-base font-semibold text-white shadow-lg transition-all duration-300 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 sm:w-auto"
       >
         {status === "sending" ? "Sending..." : "Send message"}
       </button>

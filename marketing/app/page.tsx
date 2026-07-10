@@ -5,7 +5,7 @@ import { getPage } from "@/lib/cms";
 export async function generateMetadata(): Promise<Metadata> {
   const page = await getPage("home");
   return {
-    title: { absolute: page?.seoTitle ?? page?.title ?? "MyChatPDF" },
+    title: { absolute: page?.seoTitle ?? page?.title ?? "MyPDFChat" },
     description: page?.seoDescription,
   };
 }
