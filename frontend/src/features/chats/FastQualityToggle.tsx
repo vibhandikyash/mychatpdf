@@ -12,11 +12,15 @@ export function chatModelTier(model?: string | null): ChatModelTier {
 export function FastQualityToggle({
   value,
   onChange,
-  disabled = false
+  disabled = false,
+  qualityAvailable,
+  onQualityUnavailable
 }: {
   value: ChatModelTier;
   onChange: (tier: ChatModelTier) => void;
   disabled?: boolean;
+  qualityAvailable?: boolean;
+  onQualityUnavailable?: () => void;
 }) {
   return (
     <div
@@ -33,7 +37,14 @@ export function FastQualityToggle({
             type="button"
             aria-pressed={isActive}
             disabled={disabled}
-            onClick={() => onChange(tier)}
+            onClick={() => {
+              if (tier === "quality" && qualityAvailable === false) {
+                onQualityUnavailable?.();
+                return;
+              }
+
+              onChange(tier);
+            }}
             className={`min-h-8 rounded-full px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
               isActive ? "bg-white text-sea shadow-sm ring-1 ring-teal-100" : "text-slate-600 hover:text-ink"
             }`}

@@ -33,6 +33,8 @@ interface DocumentWorkspaceProps {
   isChatLoading?: boolean;
   onSendMessage?: (message: string, model: ChatModelTier) => Promise<void> | void;
   onCancelMessage?: () => void;
+  qualityAvailable?: boolean;
+  onQualityUnavailable?: () => void;
 }
 
 const suggestedPrompts = [
@@ -60,7 +62,9 @@ export function DocumentWorkspace({
   isLoading = false,
   isChatLoading = false,
   onSendMessage,
-  onCancelMessage
+  onCancelMessage,
+  qualityAvailable,
+  onQualityUnavailable
 }: DocumentWorkspaceProps) {
   const documentPageCount = document.pageCount ?? 1;
   const documentFormat: DocumentFormat = document.format ?? "pdf";
@@ -245,6 +249,12 @@ export function DocumentWorkspace({
   useEffect(() => {
     setTier(chatModelTier(chatModel));
   }, [document.id, chatModel]);
+
+  useEffect(() => {
+    if (qualityAvailable === false && tier === "quality") {
+      setTier("fast");
+    }
+  }, [qualityAvailable, tier]);
 
   useEffect(() => {
     writeWorkspaceViewMode(workspaceViewMode);
@@ -540,7 +550,7 @@ export function DocumentWorkspace({
               )}
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <FastQualityToggle value={tier} onChange={setTier} disabled={!isReady} />
+              <FastQualityToggle value={tier} onChange={setTier} disabled={!isReady} qualityAvailable={qualityAvailable} onQualityUnavailable={onQualityUnavailable} />
             </div>
           </form>
         </div>

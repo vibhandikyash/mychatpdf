@@ -12,6 +12,8 @@ interface ChatViewProps {
   isLoading?: boolean;
   onSendMessage?: (content: string, model: ChatModelTier) => Promise<void> | void;
   onRenameChat?: (title: string) => Promise<void> | void;
+  qualityAvailable?: boolean;
+  onQualityUnavailable?: () => void;
 }
 
 interface PageReference {
@@ -30,7 +32,7 @@ function findSourceDocument(chat: ChatSummary | null, source: Citation): ChatDoc
   );
 }
 
-export function ChatView({ chat, messages, isLoading = false, onSendMessage, onRenameChat }: ChatViewProps) {
+export function ChatView({ chat, messages, isLoading = false, onSendMessage, onRenameChat, qualityAvailable, onQualityUnavailable }: ChatViewProps) {
   const [draft, setDraft] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isRenamingTitle, setIsRenamingTitle] = useState(false);
@@ -48,6 +50,12 @@ export function ChatView({ chat, messages, isLoading = false, onSendMessage, onR
       setIsSavingTitle(false);
     }
   }, [chat?.id, chat?.model, chat?.title]);
+
+  useEffect(() => {
+    if (qualityAvailable === false && tier === "quality") {
+      setTier("fast");
+    }
+  }, [qualityAvailable, tier]);
 
   useEffect(() => {
     const scrollContainer = chatScrollRef.current;
@@ -285,7 +293,7 @@ export function ChatView({ chat, messages, isLoading = false, onSendMessage, onR
               </button>
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <FastQualityToggle value={tier} onChange={setTier} disabled={!chat} />
+              <FastQualityToggle value={tier} onChange={setTier} disabled={!chat} qualityAvailable={qualityAvailable} onQualityUnavailable={onQualityUnavailable} />
             </div>
           </div>
         </div>

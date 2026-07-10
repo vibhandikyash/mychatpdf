@@ -29,6 +29,25 @@ describe("FastQualityToggle", () => {
     expect(screen.getByRole("button", { name: "Fast" })).toHaveAttribute("aria-pressed", "false");
   });
 
+
+  it("reports unavailable quality without switching tiers", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onQualityUnavailable = vi.fn();
+
+    render(
+      <FastQualityToggle
+        value="fast"
+        onChange={onChange}
+        qualityAvailable={false}
+        onQualityUnavailable={onQualityUnavailable}
+      />
+    );
+    await user.click(screen.getByRole("button", { name: "Quality" }));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onQualityUnavailable).toHaveBeenCalledOnce();
+  });
   it("maps stored chat models to a tier with fast as the fallback", () => {
     expect(chatModelTier("quality")).toBe("quality");
     expect(chatModelTier("fast")).toBe("fast");

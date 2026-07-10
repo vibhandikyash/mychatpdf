@@ -26,6 +26,7 @@ import {
   uploadDocument
 } from "./api/documents";
 import { createChat, deleteChat, getChat, listChats, renameChat, streamChatMessage } from "./api/chats";
+import { getBillingMe, getPlans } from "./api/billing";
 import { createFolder, listFolders } from "./api/folders";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";
 import { BillingPage } from "./features/billing/BillingPage";
@@ -720,6 +721,55 @@ function ErrorBanner({ error }: { error: RouteError }) {
   );
 }
 
+function FullBleedRouteFrame({ error, children }: { error: RouteError; children: ReactNode }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <ErrorBanner error={error} />
+      <div className="min-h-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
+function createQualityUpgradeError() {
+  return new LimitExceededError("chat_model", 0, 0);
+}
+
+function useQualityAnswerAvailability(api: ApiClient | null) {
+  const [qualityAvailable, setQualityAvailable] = useState<boolean | undefined>(undefined);
+
+  useEffect(() => {
+    if (!api) {
+      setQualityAvailable(undefined);
+      return;
+    }
+
+    const apiClient = api;
+    let cancelled = false;
+
+    async function refreshQualityAvailability() {
+      try {
+        const [subscription, plans] = await Promise.all([getBillingMe(apiClient), getPlans(apiClient)]);
+        const activePlan = plans.find((plan) => plan.id === subscription.plan.id);
+        if (!cancelled) {
+          setQualityAvailable(activePlan ? activePlan.allowedChatModels === null : undefined);
+        }
+      } catch {
+        if (!cancelled) {
+          setQualityAvailable(undefined);
+        }
+      }
+    }
+
+    void refreshQualityAvailability();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  return qualityAvailable;
+}
+
 function LibraryRoute() {
   const navigate = useNavigate();
   const api = useAuthenticatedApiClient();
@@ -939,11 +989,16 @@ function NewChatRoute() {
 function ChatRoute() {
   const { chatId } = useParams();
   const api = useAuthenticatedApiClient();
+  const qualityAvailable = useQualityAnswerAvailability(api);
   const [chat, setChat] = useState<ChatSummary | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [errorMessage, setErrorMessage] = useState<RouteError>(null);
   const [isLoading, setIsLoading] = useState(true);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
+
+  function handleQualityUnavailable() {
+    setErrorMessage(createQualityUpgradeError());
+  }
 
   useEffect(() => {
     if (!api || !chatId) {
@@ -1054,10 +1109,17 @@ function ChatRoute() {
   }
 
   return (
-    <>
-      <ErrorBanner error={errorMessage} />
-      <ChatView chat={chat} messages={messages} isLoading={isLoading} onSendMessage={handleSendMessage} onRenameChat={handleRenameChat} />
-    </>
+    <FullBleedRouteFrame error={errorMessage}>
+      <ChatView
+        chat={chat}
+        messages={messages}
+        isLoading={isLoading}
+        onSendMessage={handleSendMessage}
+        onRenameChat={handleRenameChat}
+        qualityAvailable={qualityAvailable}
+        onQualityUnavailable={handleQualityUnavailable}
+      />
+    </FullBleedRouteFrame>
   );
 }
 
@@ -1065,6 +1127,7 @@ function WorkspaceRoute() {
   const { documentId } = useParams();
   const location = useLocation();
   const api = useAuthenticatedApiClient();
+  const qualityAvailable = useQualityAnswerAvailability(api);
   const [document, setDocument] = useState<WorkspaceDocument>(() => findWorkspaceDocument(documentId, location.state));
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatModel, setChatModel] = useState<string | null>(null);
@@ -1072,6 +1135,10 @@ function WorkspaceRoute() {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(true);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
+
+  function handleQualityUnavailable() {
+    setErrorMessage(createQualityUpgradeError());
+  }
 
   useEffect(() => {
     const previewUrl = document.signedPdfUrl;
@@ -1328,8 +1395,7 @@ function WorkspaceRoute() {
   }
 
   return (
-    <>
-      <ErrorBanner error={errorMessage} />
+    <FullBleedRouteFrame error={errorMessage}>
       <DocumentWorkspace
         api={api}
         document={document}
@@ -1339,8 +1405,10 @@ function WorkspaceRoute() {
         isChatLoading={isChatLoading}
         onSendMessage={handleSendMessage}
         onCancelMessage={handleCancelMessage}
+        qualityAvailable={qualityAvailable}
+        onQualityUnavailable={handleQualityUnavailable}
       />
-    </>
+    </FullBleedRouteFrame>
   );
 }
 
