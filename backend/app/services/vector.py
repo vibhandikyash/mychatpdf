@@ -16,6 +16,8 @@ class RetrievedSource:
     excerpt: str
     score: float | None
     context: str | None = None
+    document_id: str | None = None
+    document_filename: str | None = None
 
 
 ANSWER_SYSTEM_PROMPT = (
@@ -47,11 +49,26 @@ ANSWER_SYSTEM_PROMPT = (
     "Preserve important technical terms and numbers exactly when they appear in context. "
     "If context blocks conflict, explain the conflict and cite both pages."
 )
-SUMMARY_MAX_COMPLETION_TOKENS = 320
+MULTI_DOCUMENT_ATTRIBUTION_PROMPT = (
+    "When the context contains multiple documents, organize the answer by document whenever the user asks about "
+    "each file, each document, all files, all documents, every file, every document, or per-document findings. "
+    "Use one short section per document with the document filename as the section label, then add any cross-document "
+    "comparison only after the per-document findings. "
+    "Attribute each claim to its document by name. "
+    "For comparisons, state per-document findings before the comparison."
+)
+PER_DOCUMENT_DETAIL_PROMPT = (
+    "The user is asking for a per-document answer. Do not collapse the answer into generic source-by-source notes. "
+    "Give every matched document its own concise section, synthesize the relevant teaching, lesson, finding, or point "
+    "from that document, and include enough detail to distinguish it from the other documents."
+)
+SUMMARY_MAX_COMPLETION_TOKENS = 600
 DOCUMENT_OVERVIEW_SOURCE_LIMIT = 12
 DOCUMENT_INTELLIGENCE_SOURCE_LIMIT = 80
 DOCUMENT_OVERVIEW_CONTEXT_CHAR_LIMIT = 1000
 DOCUMENT_OVERVIEW_CONTEXT_TAIL_CHARS = 400
+MULTI_DOCUMENT_RETRIEVAL_TOP_K_MIN = 16
+MULTI_DOCUMENT_CONTEXT_SOURCE_LIMIT_MIN = 12
 DOCUMENT_INTELLIGENCE_VERSION = 2
 DOCUMENT_INTELLIGENCE_MAX_COMPLETION_TOKENS = 1400
 DOCUMENT_INTELLIGENCE_FIELDS = ("summary", "key_takeaways", "action_items", "attention_points")
@@ -120,6 +137,39 @@ def question_needs_short_summary(question: str) -> bool:
     if not ("summar" in text and ("document" in text or "file" in text)):
         return False
     return not any(term in text for term in ("comprehensive", "detail", "exhaustive", "in depth", "in-depth", "thorough"))
+
+
+def question_needs_per_document_answer(question: str) -> bool:
+    text = question.lower()
+    return any(
+        phrase in text
+        for phrase in (
+            "each file",
+            "each document",
+            "all files",
+            "all documents",
+            "all the files",
+            "all the documents",
+            "all pdfs",
+            "all the pdfs",
+            "each pdf",
+            "every file",
+            "every document",
+            "every pdf",
+            "per file",
+            "per document",
+            "from each file",
+            "from each document",
+            "in each file",
+            "in each document",
+            "for each file",
+            "for each document",
+        )
+    )
+
+
+def multi_document_context_source_limit(configured_limit: int) -> int:
+    return max(configured_limit, MULTI_DOCUMENT_CONTEXT_SOURCE_LIMIT_MIN)
 
 
 def is_front_matter_chunk(chunk: DocumentChunk, total_chunks: int) -> bool:
@@ -220,6 +270,31 @@ def _has_explicit_action_markers(sources: list[RetrievedSource]) -> bool:
     return any(marker in text for marker in EXPLICIT_ACTION_MARKERS)
 
 
+def _fair_scope_selection(sources: list[RetrievedSource], limit: int) -> list[RetrievedSource]:
+    # Guarantee at least one source per matched document before filling the
+    # remaining slots by score, so one verbose document cannot drown out the rest.
+    ranked = sorted(sources, key=lambda source: source.score or 0.0, reverse=True)
+    selected: list[RetrievedSource] = []
+    selected_chunk_ids: set[str] = set()
+    covered_documents: set[str | None] = set()
+    for source in ranked:
+        if len(selected) == limit:
+            break
+        if source.document_id in covered_documents:
+            continue
+        covered_documents.add(source.document_id)
+        selected.append(source)
+        selected_chunk_ids.add(source.chunk_id)
+    for source in ranked:
+        if len(selected) == limit:
+            break
+        if source.chunk_id not in selected_chunk_ids:
+            selected.append(source)
+            selected_chunk_ids.add(source.chunk_id)
+    selected.sort(key=lambda source: source.score or 0.0, reverse=True)
+    return selected
+
+
 def _parse_json_object(text: str) -> dict[str, object]:
     try:
         payload = json.loads(text)
@@ -311,6 +386,15 @@ class VectorService:
         index.upsert(vectors=records, namespace=self.settings.pinecone_namespace)
 
     def query_document(self, user: User, document: Document, question: str) -> list[RetrievedSource]:
+        return self.query_scope(user, [document], question)
+
+    def query_scope(self, user: User, documents: list[Document], question: str) -> list[RetrievedSource]:
+        filename_by_document_id = {str(document.id): document.original_filename for document in documents}
+        source_limit = self.settings.max_context_sources
+        top_k = self.settings.retrieval_top_k
+        if len(documents) > 1:
+            source_limit = multi_document_context_source_limit(source_limit)
+            top_k = max(top_k, MULTI_DOCUMENT_RETRIEVAL_TOP_K_MIN, source_limit)
         if self.settings.openai_api_key and self.settings.pinecone_api_key:
             from pinecone import Pinecone
 
@@ -319,32 +403,41 @@ class VectorService:
             response = index.query(
                 vector=question_vector,
                 namespace=self.settings.pinecone_namespace,
-                top_k=8,
+                top_k=top_k,
                 include_metadata=True,
-                filter={"user_id": str(user.id), "document_id": str(document.id)},
+                filter={"user_id": str(user.id), "document_id": {"$in": list(filename_by_document_id)}},
             )
-            return [
+            sources = [
                 RetrievedSource(
                     chunk_id=str(match.metadata.get("chunk_id")),
                     page_start=int(match.metadata.get("page_start", 1)),
                     page_end=int(match.metadata.get("page_end", match.metadata.get("page_start", 1))),
                     excerpt=str(match.metadata.get("text_excerpt", "")),
                     score=float(match.score) if match.score is not None else None,
+                    document_id=str(match.metadata.get("document_id")),
+                    document_filename=filename_by_document_id.get(str(match.metadata.get("document_id"))),
                 )
                 for match in response.matches
                 if match.metadata
             ]
+        else:
+            sources = [
+                RetrievedSource(
+                    chunk_id=str(chunk.id),
+                    page_start=chunk.page_start,
+                    page_end=chunk.page_end,
+                    excerpt=chunk.text_excerpt,
+                    score=None,
+                    document_id=str(document.id),
+                    document_filename=document.original_filename,
+                )
+                for document in documents
+                for chunk in document.chunks[:3]
+            ]
 
-        return [
-            RetrievedSource(
-                chunk_id=str(chunk.id),
-                page_start=chunk.page_start,
-                page_end=chunk.page_end,
-                excerpt=chunk.text_excerpt,
-                score=None,
-            )
-            for chunk in document.chunks[:3]
-        ]
+        if len(documents) > 1:
+            return _fair_scope_selection(sources, source_limit)
+        return sources
 
     def delete_document_vectors(self, user: User, document: Document) -> None:
         if not self.settings.pinecone_api_key:
@@ -393,7 +486,9 @@ class VectorService:
         payload["sources"] = [_source_payload(source) for source in sources]
         return payload
 
-    def stream_answer_tokens(self, question: str, sources: list[RetrievedSource]) -> Iterator[str]:
+    def stream_answer_tokens(
+        self, question: str, sources: list[RetrievedSource], model: str | None = None
+    ) -> Iterator[str]:
         if not self.settings.openai_api_key:
             if sources:
                 yield (
@@ -406,15 +501,24 @@ class VectorService:
 
         from openai import OpenAI
 
-        context = "\n\n".join(format_source_context(index, source) for index, source in enumerate(sources, start=1))
+        multi_document = len({source.document_id for source in sources if source.document_id}) > 1
+        context = "\n\n".join(
+            format_source_context(index, source, multi_document=multi_document)
+            for index, source in enumerate(sources, start=1)
+        )
+        system_prompt = ANSWER_SYSTEM_PROMPT
+        if multi_document:
+            system_prompt = f"{ANSWER_SYSTEM_PROMPT} {MULTI_DOCUMENT_ATTRIBUTION_PROMPT}"
+        if multi_document and question_needs_per_document_answer(question):
+            system_prompt = f"{system_prompt} {PER_DOCUMENT_DETAIL_PROMPT}"
         client = OpenAI(api_key=self.settings.openai_api_key)
         request: dict[str, object] = {
-            "model": self.settings.openai_chat_model,
+            "model": model or self.settings.openai_chat_model,
             "stream": True,
             "messages": [
                 {
                     "role": "system",
-                    "content": ANSWER_SYSTEM_PROMPT,
+                    "content": system_prompt,
                 },
                 {
                     "role": "user",
@@ -430,6 +534,7 @@ class VectorService:
                         "- Format the answer with short paragraphs or bullet lists when it improves readability.\n"
                         "- For whole-document summaries, cover the major themes across the document instead of one narrow section.\n"
                         "- For plain whole-document summary requests, return exactly 5 short bullets, no intro or closing paragraph, about 150 words total unless the user asks for detail.\n"
+                        "- If the user asks about each file, each document, all files, all documents, every file, every document, or per-document findings, do not apply the short-summary limit; use one concise section per document.\n"
                         "- For attention or focus questions, answer as a practical checklist of what matters most in the document.\n"
                         "- Put page citations on the same sentence or bullet as the claim they support.\n"
                         "- Use LaTeX for equations when it improves readability.\n"
@@ -441,7 +546,7 @@ class VectorService:
         }
         if self.settings.openai_chat_temperature is not None:
             request["temperature"] = self.settings.openai_chat_temperature
-        if question_needs_short_summary(question):
+        if question_needs_short_summary(question) and not question_needs_per_document_answer(question):
             request["max_completion_tokens"] = SUMMARY_MAX_COMPLETION_TOKENS
         stream = client.chat.completions.create(**request)
         for event in stream:
@@ -477,5 +582,12 @@ def format_page_citation(source: RetrievedSource) -> str:
     return f"pp. {source.page_start}-{source.page_end}"
 
 
-def format_source_context(index: int, source: RetrievedSource) -> str:
+def format_source_context(index: int, source: RetrievedSource, *, multi_document: bool = False) -> str:
+    if multi_document:
+        pages = (
+            f"p.{source.page_start}"
+            if source.page_start == source.page_end
+            else f"p.{source.page_start}-{source.page_end}"
+        )
+        return f'[S{index} · "{source.document_filename}" {pages}]\nText:\n{source.context or source.excerpt}'
     return f"[Source {index} | {format_page_citation(source)}]\nText:\n{source.context or source.excerpt}"

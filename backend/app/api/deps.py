@@ -1,3 +1,4 @@
+import logging
 from functools import lru_cache
 from typing import Annotated, Any
 from uuid import UUID
@@ -10,7 +11,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
-from app.models import Document, User
+from app.models import Chat, Document, Folder, User
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=8)
@@ -46,6 +49,7 @@ async def get_current_clerk_claims(
         decode_kwargs: dict[str, Any] = {
             "algorithms": ["RS256"],
             "issuer": settings.clerk_issuer,
+            "leeway": 30,
         }
         if settings.clerk_audience:
             decode_kwargs["audience"] = settings.clerk_audience
@@ -53,6 +57,7 @@ async def get_current_clerk_claims(
             decode_kwargs["options"] = {"verify_aud": False}
         claims = jwt.decode(token, signing_key.key, **decode_kwargs)
     except jwt.PyJWTError as exc:
+        logger.warning("Clerk JWT rejected: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
@@ -126,3 +131,17 @@ def get_owned_document(db: Session, user: User, document_id: UUID) -> Document:
     if document is None or document.user_id != user.id or document.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return document
+
+
+def get_owned_folder(db: Session, user: User, folder_id: UUID) -> Folder:
+    folder = db.get(Folder, folder_id)
+    if folder is None or folder.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Folder not found")
+    return folder
+
+
+def get_owned_chat(db: Session, user: User, chat_id: UUID) -> Chat:
+    chat = db.get(Chat, chat_id)
+    if chat is None or chat.user_id != user.id or chat.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+    return chat

@@ -1,6 +1,7 @@
 import { expect, Page, Route, test } from "@playwright/test";
 
-const fallbackAppUrl = `http://${process.env.E2E_HOST ?? "0.0.0.0"}:${process.env.E2E_PORT ?? "5173"}`;
+const e2eHost = process.env.E2E_HOST ?? "0.0.0.0";
+const fallbackAppUrl = `http://${e2eHost === "0.0.0.0" ? "localhost" : e2eHost}:${process.env.E2E_PORT ?? "5173"}`;
 const apiRoutePattern = process.env.E2E_API_ROUTE_PATTERN ?? "**/api/**";
 const appOrigin = new URL(process.env.E2E_BASE_URL ?? fallbackAppUrl).origin;
 const documentId = "doc-e2e-ready";
@@ -32,7 +33,7 @@ test("user uploads a PDF, asks a question, opens a citation, and refreshes chat 
   await mockApi(page);
 
   await page.goto("/app");
-  await expect(page.getByRole("heading", { name: "Start with a PDF" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Chat with any document" })).toBeVisible();
 
   await page.locator("#pdf-upload").setInputFiles({
     name: "pipeline-notes.pdf",
@@ -41,14 +42,14 @@ test("user uploads a PDF, asks a question, opens a citation, and refreshes chat 
   });
 
   await expect(page).toHaveURL(/\/app\/documents\/doc-e2e-ready$/);
-  await expect(page.getByText("Uploading PDF...")).toBeVisible();
+  await expect(page.getByText("Uploading file...")).toBeVisible();
   await expect(page.getByText("Ready to chat")).toBeVisible({ timeout: 6_000 });
 
   await page.getByRole("textbox", { name: "Ask this document" }).fill("What improved?");
   await page.getByRole("button", { name: "Send message" }).click();
 
   await expect(page.getByText("What improved?")).toBeVisible();
-  await expect(page.getByText("Pipeline quality improved in regulated industries.").first()).toBeVisible();
+  await expect(page.getByText("Pipeline quality improved in regulated industries").first()).toBeVisible();
 
   await page.getByRole("button", { name: "Open page 2 in PDF" }).click();
   await expect(page.getByText("Page 2 of 3")).toBeVisible();
@@ -56,21 +57,21 @@ test("user uploads a PDF, asks a question, opens a citation, and refreshes chat 
   await page.reload();
   await expect(page.getByText("Ready to chat")).toBeVisible();
   await expect(page.getByText("What improved?")).toBeVisible();
-  await expect(page.getByText("Pipeline quality improved in regulated industries.").first()).toBeVisible();
+  await expect(page.getByText("Pipeline quality improved in regulated industries").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Open page 2 in PDF" })).toBeVisible();
 });
 
-test("rejects a non-PDF upload before calling the upload API", async ({ page }) => {
+test("rejects an unsupported upload before calling the upload API", async ({ page }) => {
   const state = await mockApi(page);
 
   await page.goto("/app");
   await page.locator("#pdf-upload").setInputFiles({
-    name: "meeting-notes.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("plain text is not supported")
+    name: "meeting-notes.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("csv,files,are,not,supported")
   });
 
-  await expect(page.getByRole("alert")).toContainText("Only PDF files are supported in Phase 1.");
+  await expect(page.getByRole("alert")).toContainText("Unsupported file type. Upload a PDF, DOCX, PPTX, TXT, or RTF file.");
   expect(state.uploadRequests).toBe(0);
 });
 
@@ -84,7 +85,7 @@ test("rejects an oversized PDF before calling the upload API", async ({ page }) 
     buffer: Buffer.alloc(20 * 1024 * 1024 + 1, 0)
   });
 
-  await expect(page.getByRole("alert")).toContainText("File too large. Upload a PDF under 20 MB.");
+  await expect(page.getByRole("alert")).toContainText("File too large. Upload a file under 20 MB.");
   expect(state.uploadRequests).toBe(0);
 });
 
@@ -98,7 +99,7 @@ test("shows an error when the chat stream returns an error event", async ({ page
   await page.getByRole("button", { name: "Send message" }).click();
 
   await expect(page.getByText("What improved?")).toBeVisible();
-  await expect(page.getByText("Unable to send this message right now.")).toBeVisible();
+  await expect(page.getByText("Unable to generate an answer right now.")).toBeVisible();
 });
 
 async function mockApi(
@@ -122,8 +123,23 @@ async function mockApi(
     const url = new URL(request.url());
     const method = request.method();
 
+    if (!url.pathname.startsWith("/api/")) {
+      await route.fallback();
+      return;
+    }
+
     if (method === "OPTIONS") {
       await route.fulfill({ status: 204, headers: corsHeaders() });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/chats") {
+      await fulfillJson(route, { items: [], next_cursor: null });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/folders") {
+      await fulfillJson(route, { items: [] });
       return;
     }
 
@@ -168,9 +184,14 @@ async function mockApi(
       return;
     }
 
+    if (method === "GET" && url.pathname === `/api/documents/${documentId}/file`) {
+      await route.fallback();
+      return;
+    }
+
     if (method === "GET" && url.pathname === `/api/documents/${documentId}/file-url`) {
       await fulfillJson(route, {
-        url: "about:blank",
+        url: `${appOrigin}/e2e-fixture.pdf`,
         expires_at: "2026-06-15T12:00:00Z"
       });
       return;
@@ -282,3 +303,4 @@ function corsHeaders() {
     "access-control-allow-methods": "GET,POST,DELETE,OPTIONS"
   };
 }
+

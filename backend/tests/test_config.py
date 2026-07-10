@@ -12,6 +12,18 @@ def test_empty_optional_numeric_environment_values_are_none(monkeypatch):
     assert settings.openai_chat_temperature is None
 
 
+def test_allowed_chat_models_parses_comma_separated_env(monkeypatch):
+    monkeypatch.setenv("OPENAI_ALLOWED_CHAT_MODELS", "gpt-4.1, o4-mini ,gpt-4.1-mini")
+
+    settings = Settings()
+
+    assert settings.allowed_chat_models() == ["gpt-4.1", "o4-mini", "gpt-4.1-mini"]
+
+
+def test_allowed_chat_models_default_list():
+    assert Settings(_env_file=None).allowed_chat_models() == ["gpt-4.1-mini", "gpt-4.1", "o4-mini"]
+
+
 def test_cors_origins_combines_legacy_and_list_values():
     settings = Settings(
         _env_file=None,

@@ -22,6 +22,13 @@ DEFAULT_CHUNK_OVERLAP_TOKENS = 150
 
 
 class NoExtractableTextError(RuntimeError):
+    def __init__(self, message: str, page_count: int | None = None):
+        super().__init__(message)
+        # Pre-filter page count of the document, when the extractor knows it.
+        self.page_count = page_count
+
+
+class UnsupportedFileError(RuntimeError):
     pass
 
 
@@ -33,28 +40,6 @@ class MaxPagesExceededError(RuntimeError):
 class ExtractedPage:
     page_number: int
     text: str
-
-
-class PdfTextExtractor:
-    def __init__(self, storage_service=None):
-        self.storage_service = storage_service
-
-    def extract_pages(self, document: Document) -> list[ExtractedPage]:
-        if self.storage_service is None:
-            return []
-
-        import fitz
-
-        pdf_bytes = self.storage_service.download_pdf(document)
-        if not pdf_bytes:
-            return []
-
-        pages: list[ExtractedPage] = []
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf:
-            document.page_count = pdf.page_count
-            for index, page in enumerate(pdf, start=1):
-                pages.append(ExtractedPage(page_number=index, text=page.get_text("text")))
-        return pages
 
 
 def _text_tokens(text: str) -> list[str]:
@@ -106,37 +91,42 @@ def _latest_job(document: Document) -> ProcessingJob:
     return document.processing_jobs[-1]
 
 
-def _fail_no_text(db: Session, document: Document, job: ProcessingJob) -> None:
-    message = "This PDF appears to be scanned or image-based. Phase 1 supports text-based PDFs only."
+def _fail_job(db: Session, document: Document, job: ProcessingJob, code: str, message: str) -> None:
     document.status = DocumentStatus.FAILED
-    document.failure_code = "no_extractable_text"
+    document.failure_code = code
     document.failure_message = message
     job.status = ProcessingJobStatus.FAILED
     job.current_step = "failed"
-    job.error_code = "no_extractable_text"
+    job.error_code = code
     job.error_message = message
     job.finished_at = utc_now()
     db.commit()
+
+
+def _fail_no_text(db: Session, document: Document, job: ProcessingJob) -> None:
+    if (document.format or "pdf") == "pdf":
+        message = "This PDF appears to be scanned or image-based. Phase 1 supports text-based PDFs only."
+    else:
+        message = "No readable text was found in this file."
+    _fail_job(db, document, job, "no_extractable_text", message)
+
+
+def _fail_unsupported_file(db: Session, document: Document, job: ProcessingJob, reason: str) -> None:
+    _fail_job(db, document, job, "unsupported_file", reason or "This file could not be read.")
 
 
 def _fail_max_pages(db: Session, document: Document, job: ProcessingJob, page_count: int, max_pdf_pages: int) -> None:
-    message = f"PDF has {page_count} pages, which exceeds the configured limit of {max_pdf_pages} pages."
-    document.status = DocumentStatus.FAILED
-    document.failure_code = "max_pdf_pages_exceeded"
-    document.failure_message = message
-    job.status = ProcessingJobStatus.FAILED
-    job.current_step = "failed"
-    job.error_code = "max_pdf_pages_exceeded"
-    job.error_message = message
-    job.finished_at = utc_now()
-    db.commit()
+    # "Pages" are slides for pptx and 800-word sections for docx/txt/rtf.
+    unit = {"pdf": "pages", "pptx": "slides"}.get(document.format or "pdf", "sections")
+    message = f"Document has {page_count} {unit}, which exceeds the configured limit of {max_pdf_pages} {unit}."
+    _fail_job(db, document, job, "max_pdf_pages_exceeded", message)
 
 
 def process_document(
     db: Session,
     document_id: UUID,
     *,
-    extractor: PdfTextExtractor,
+    extractor,
     vector_service: VectorService,
     max_pdf_pages: int | None = None,
 ) -> None:
@@ -152,7 +142,34 @@ def process_document(
     job.current_step = "extracting"
     db.commit()
 
-    pages = extractor.extract_pages(document)
+    try:
+        pages = extractor.extract_pages(document)
+    except NoExtractableTextError as error:
+        # An image-only document over the page cap is a page-cap failure, not
+        # a no-text one; check the cap first so the failure code matches.
+        page_count = document.page_count or error.page_count
+        if max_pdf_pages is not None and page_count and page_count > max_pdf_pages:
+            logger.info(
+                "Document exceeded page limit",
+                extra={
+                    "document_id": str(document.id),
+                    "page_count": page_count,
+                    "max_pdf_pages": max_pdf_pages,
+                },
+            )
+            _fail_max_pages(db, document, job, page_count, max_pdf_pages)
+            raise MaxPagesExceededError("max pdf pages exceeded") from error
+        logger.info("Document has no extractable text", extra={"document_id": str(document.id)})
+        _fail_no_text(db, document, job)
+        raise
+    except UnsupportedFileError as error:
+        logger.info(
+            "Document file could not be parsed",
+            extra={"document_id": str(document.id), "format": document.format},
+        )
+        _fail_unsupported_file(db, document, job, str(error))
+        raise
+
     page_count = document.page_count or len(pages)
     if max_pdf_pages is not None and page_count > max_pdf_pages:
         logger.info(

@@ -15,18 +15,23 @@ import {
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { Columns2, FileText, GripVertical, Loader2, MessageCircle, SendHorizontal, Square } from "lucide-react";
-import { ChatMessage, Citation, WorkspaceDocument } from "../../types";
-import { documentStatusLabel, isProcessingStatus } from "./status";
+import type { ApiClient } from "../../api/client";
+import { ChatMessage, ChatModelTier, Citation, DocumentFormat, WorkspaceDocument } from "../../types";
+import { chatModelTier, FastQualityToggle } from "../chats/FastQualityToggle";
+import { citationPageLabel, documentStatusLabel, isProcessingStatus } from "./status";
 import type { PdfSelectionAction } from "./PdfSelectionToolbar";
+import { TextPreview } from "./TextPreview";
 
 const PdfViewer = lazy(() => import("./PdfViewer").then((module) => ({ default: module.PdfViewer })));
 
 interface DocumentWorkspaceProps {
+  api?: ApiClient | null;
   document: WorkspaceDocument;
   messages: ChatMessage[];
+  chatModel?: string | null;
   isLoading?: boolean;
   isChatLoading?: boolean;
-  onSendMessage?: (message: string) => Promise<void> | void;
+  onSendMessage?: (message: string, model: ChatModelTier) => Promise<void> | void;
   onCancelMessage?: () => void;
 }
 
@@ -48,14 +53,19 @@ const RESIZER_KEYBOARD_STEP = 3;
 type WorkspaceViewMode = "pdf" | "split" | "chat";
 
 export function DocumentWorkspace({
+  api = null,
   document,
   messages,
+  chatModel,
   isLoading = false,
   isChatLoading = false,
   onSendMessage,
   onCancelMessage
 }: DocumentWorkspaceProps) {
   const documentPageCount = document.pageCount ?? 1;
+  const documentFormat: DocumentFormat = document.format ?? "pdf";
+  const canUsePdfPreview = documentFormat !== "txt";
+  const isTextPreviewDocument = documentFormat === "txt";
   const [activePage, setActivePage] = useState(1);
   const [zoom, setZoom] = useState(100);
   const [viewerPageCount, setViewerPageCount] = useState(documentPageCount);
@@ -67,6 +77,7 @@ export function DocumentWorkspace({
   const [isResizingWorkspace, setIsResizingWorkspace] = useState(false);
   const [draft, setDraft] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [tier, setTier] = useState<ChatModelTier>(() => chatModelTier(chatModel));
   const workspaceBodyRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -105,7 +116,7 @@ export function DocumentWorkspace({
     setIsGenerating(true);
     setDraft("");
     try {
-      await onSendMessage?.(message.trim());
+      await onSendMessage?.(message.trim(), tier);
     } finally {
       setIsGenerating(false);
     }
@@ -232,6 +243,10 @@ export function DocumentWorkspace({
   }, [document.id, documentPageCount]);
 
   useEffect(() => {
+    setTier(chatModelTier(chatModel));
+  }, [document.id, chatModel]);
+
+  useEffect(() => {
     writeWorkspaceViewMode(workspaceViewMode);
   }, [workspaceViewMode]);
 
@@ -345,22 +360,35 @@ export function DocumentWorkspace({
             showPdfOnDesktop ? "lg:block" : "lg:hidden"
           } h-full min-h-0 bg-slate-100 ${showChatOnDesktop && !isSplitView ? "lg:border-r lg:border-slate-200" : ""}`}
         >
-          <Suspense fallback={<PdfViewerFallback />}>
-            <PdfViewer
+          {canUsePdfPreview ? (
+            <Suspense fallback={<PdfViewerFallback />}>
+              <PdfViewer
+                document={document}
+                activePage={activePage}
+                totalPages={totalPages}
+                zoom={zoom}
+                scrollRequestId={pdfScrollRequestId}
+                activeSource={activeSource}
+                onPageChange={jumpToPage}
+                onTotalPagesChange={updateTotalPages}
+                onVisiblePageChange={updateVisiblePage}
+                onZoomChange={setZoom}
+                onSelectionAction={askAboutSelection}
+                isSelectionActionDisabled={!isReady || isGenerating}
+              />
+            </Suspense>
+          ) : isTextPreviewDocument ? (
+            <TextPreview
+              api={api}
               document={document}
               activePage={activePage}
-              totalPages={totalPages}
-              zoom={zoom}
               scrollRequestId={pdfScrollRequestId}
               activeSource={activeSource}
-              onPageChange={jumpToPage}
               onTotalPagesChange={updateTotalPages}
-              onVisiblePageChange={updateVisiblePage}
-              onZoomChange={setZoom}
-              onSelectionAction={askAboutSelection}
-              isSelectionActionDisabled={!isReady || isGenerating}
             />
-          </Suspense>
+          ) : (
+            <NonPdfPreviewPlaceholder filename={document.originalFilename} format={documentFormat} />
+          )}
         </div>
 
         {isSplitView ? (
@@ -425,7 +453,7 @@ export function DocumentWorkspace({
                   />
                 ) : (
                   <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
-                    The PDF is being prepared. Chat will unlock as soon as text extraction and indexing finish.
+                    The document is being prepared. Chat will unlock as soon as text extraction and indexing finish.
                   </div>
                 )
               ) : null}
@@ -433,8 +461,8 @@ export function DocumentWorkspace({
               {orderedMessages.map((message) => (
                 <article
                   key={message.id}
-                  className={`rounded-lg border px-4 py-3 ${
-                    message.role === "user" ? "brand-gradient ml-auto max-w-[88%] border-transparent text-white shadow-sm" : "mr-auto max-w-[92%] border-slate-200 bg-white text-ink"
+                  className={`rounded-lg border px-4 py-3 break-words ${
+                    message.role === "user" ? "brand-gradient ml-auto w-fit max-w-[88%] border-transparent text-white shadow-sm" : "mr-auto max-w-[92%] border-slate-200 bg-white text-ink"
                   }`}
                 >
                   {message.role === "assistant" && !message.content && message.id === streamingAssistant?.id ? (
@@ -446,6 +474,7 @@ export function DocumentWorkspace({
                     <FormattedChatMessage
                       activeSourceId={activeSourceId}
                       content={message.content}
+                      format={documentFormat}
                       isStreaming={message.id === streamingAssistant?.id && Boolean(message.content)}
                       role={message.role}
                       sources={message.sources ?? []}
@@ -479,6 +508,12 @@ export function DocumentWorkspace({
                 aria-label="Ask this document"
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
                 disabled={!isReady || isGenerating}
                 rows={3}
                 placeholder={isReady ? "Ask this document..." : "Waiting for processing to finish..."}
@@ -503,6 +538,9 @@ export function DocumentWorkspace({
                   <SendHorizontal size={18} aria-hidden="true" />
                 </button>
               )}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <FastQualityToggle value={tier} onChange={setTier} disabled={!isReady} />
             </div>
           </form>
         </div>
@@ -567,7 +605,7 @@ function ChatWelcomeCard({
           <MessageCircle size={18} aria-hidden="true" />
         </span>
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-ink">Your PDF is ready.</p>
+          <p className="text-sm font-semibold text-ink">Your document is ready.</p>
           <p className="mt-1 text-sm leading-6 text-slate-600">
             Ask anything about <span className="font-medium text-ink">{documentName}</span>. I will answer from the document and link
             cited pages inline when the answer references them.
@@ -607,6 +645,7 @@ interface PageReference {
 function FormattedChatMessage({
   activeSourceId,
   content,
+  format,
   isStreaming,
   role,
   sources,
@@ -614,6 +653,7 @@ function FormattedChatMessage({
 }: {
   activeSourceId: string | null;
   content: string;
+  format: DocumentFormat;
   isStreaming: boolean;
   role: ChatMessage["role"];
   sources: Citation[];
@@ -623,12 +663,12 @@ function FormattedChatMessage({
   const textClassName = role === "user" ? "text-white" : "text-ink";
 
   return (
-    <div className={`space-y-3 text-sm leading-6 ${textClassName}`}>
+    <div className={`space-y-3 break-words text-sm leading-6 ${textClassName}`}>
       {blocks.map((block, blockIndex) => {
         if (block.type === "heading") {
           return (
             <h2 key={`heading-${blockIndex}`} className="text-sm font-semibold">
-              {renderInlineText(block.text, `heading-${blockIndex}`, role, activeSourceId, sources, onOpenPage)}
+              {renderInlineText(block.text, `heading-${blockIndex}`, format, role, activeSourceId, sources, onOpenPage)}
             </h2>
           );
         }
@@ -638,7 +678,7 @@ function FormattedChatMessage({
             <ul key={`bullet-${blockIndex}`} className="space-y-1 pl-5 marker:text-current">
               {block.items.map((item, itemIndex) => (
                 <li key={`bullet-${blockIndex}-${itemIndex}`} className="list-disc">
-                  {renderInlineText(item, `bullet-${blockIndex}-${itemIndex}`, role, activeSourceId, sources, onOpenPage)}
+                  {renderInlineText(item, `bullet-${blockIndex}-${itemIndex}`, format, role, activeSourceId, sources, onOpenPage)}
                 </li>
               ))}
             </ul>
@@ -650,7 +690,7 @@ function FormattedChatMessage({
             <ol key={`numbered-${blockIndex}`} className="space-y-1 pl-5 marker:text-current">
               {block.items.map((item, itemIndex) => (
                 <li key={`numbered-${blockIndex}-${itemIndex}`} className="list-decimal">
-                  {renderInlineText(item, `numbered-${blockIndex}-${itemIndex}`, role, activeSourceId, sources, onOpenPage)}
+                  {renderInlineText(item, `numbered-${blockIndex}-${itemIndex}`, format, role, activeSourceId, sources, onOpenPage)}
                 </li>
               ))}
             </ol>
@@ -659,7 +699,7 @@ function FormattedChatMessage({
 
         return (
           <p key={`paragraph-${blockIndex}`}>
-            {renderInlineText(block.text, `paragraph-${blockIndex}`, role, activeSourceId, sources, onOpenPage)}
+            {renderInlineText(block.text, `paragraph-${blockIndex}`, format, role, activeSourceId, sources, onOpenPage)}
           </p>
         );
       })}
@@ -718,6 +758,25 @@ const processingSteps = [
   { status: "embedding", label: "Embedding" },
   { status: "indexing", label: "Indexing" }
 ] as const;
+
+function NonPdfPreviewPlaceholder({ filename, format }: { filename: string; format: DocumentFormat }) {
+  return (
+    <div className="grid h-full min-h-0 place-items-center bg-slate-100 p-6">
+      <div className="max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+        <span className="mx-auto grid h-12 w-12 place-items-center rounded-lg bg-teal-50 text-sea">
+          <FileText size={22} aria-hidden="true" />
+        </span>
+        <p className="mt-3 truncate text-sm font-semibold text-ink" title={filename}>
+          {filename}
+        </p>
+        <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{format} file</p>
+        <p className="mt-3 text-sm leading-6 text-slate-600">
+          Preview is not available for this file type. Chat works on the full document text.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function PdfViewerFallback() {
   return (
@@ -850,6 +909,7 @@ function parseChatMessageBlocks(content: string): ChatMessageBlock[] {
 function renderInlineText(
   text: string,
   keyPrefix: string,
+  format: DocumentFormat,
   role: ChatMessage["role"],
   activeSourceId: string | null,
   sources: Citation[],
@@ -866,7 +926,7 @@ function renderInlineText(
       nodes.push(...renderStrongText(text.slice(cursor, match.index), `${keyPrefix}-text-${matchIndex}`));
     }
 
-    const references = parsePageReferences(match[2]);
+    const references = parsePageReferences(match[2], format);
     if (references.length) {
       nodes.push(
         <InlinePageReferences
@@ -1015,7 +1075,7 @@ function InlinePageReferences({
   onOpenPage: (page: number, sourceId?: string) => void;
 }) {
   return (
-    <span className="mx-1 inline-flex flex-wrap items-center gap-1 align-baseline">
+    <span className="mx-0.5 inline-flex flex-wrap items-center gap-0.5 align-baseline">
       {references.map((reference, index) => {
         const source = findSourceForPage(sources, reference.pageStart, reference.pageEnd);
         const isActive = Boolean(source?.sourceId && source.sourceId === activeSourceId);
@@ -1025,14 +1085,14 @@ function InlinePageReferences({
           <button
             key={`${reference.pageStart}-${reference.pageEnd}-${index}`}
             type="button"
-            aria-label={`Open page ${reference.pageStart} in PDF`}
+            aria-label={`Open ${reference.label} in document preview`}
             onClick={() => onOpenPage(reference.pageStart, source?.sourceId)}
-            className={`inline-flex h-6 items-center rounded-full px-2 text-[11px] font-semibold leading-none transition ${
+            className={`inline-flex h-5 items-center rounded-full px-1.5 text-[10px] font-semibold leading-none transition ${
               isUserMessage
                 ? "bg-white/15 text-white ring-1 ring-white/25 hover:bg-white/25"
                 : isActive
                   ? "brand-gradient text-white"
-                  : "bg-teal-50 text-sea ring-1 ring-teal-100 hover:bg-teal-100"
+                  : "bg-blue-50 text-blue-700 ring-1 ring-blue-100 hover:bg-blue-100"
             }`}
             title={`Open ${reference.label}`}
           >
@@ -1044,7 +1104,7 @@ function InlinePageReferences({
   );
 }
 
-function parsePageReferences(value: string): PageReference[] {
+function parsePageReferences(value: string, format: DocumentFormat): PageReference[] {
   return Array.from(value.matchAll(/\d+(?:\s*[-–—]\s*\d+)?/g))
     .map((match) => {
       const [startText, endText] = match[0].split(/[-–—]/).map((part) => part.trim());
@@ -1059,7 +1119,7 @@ function parsePageReferences(value: string): PageReference[] {
       return {
         pageStart,
         pageEnd,
-        label: pageStart === pageEnd ? `p. ${pageStart}` : `pp. ${pageStart}-${pageEnd}`
+        label: citationPageLabel(format, pageStart, pageEnd)
       };
     })
     .filter((reference): reference is PageReference => reference !== null);

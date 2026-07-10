@@ -1,6 +1,15 @@
+import pytest
+
 from app.models import Document, DocumentStatus, ProcessingJob, ProcessingJobStatus, User
 from app.models import DocumentChunk
-from app.services.processing import ExtractedPage, MaxPagesExceededError, NoExtractableTextError, process_document
+from app.services.extractors import DocumentTextExtractor
+from app.services.processing import (
+    ExtractedPage,
+    MaxPagesExceededError,
+    NoExtractableTextError,
+    UnsupportedFileError,
+    process_document,
+)
 from app.services.processing import chunk_pages
 from app.services.vector import DOCUMENT_INTELLIGENCE_VERSION
 
@@ -8,6 +17,11 @@ from app.services.vector import DOCUMENT_INTELLIGENCE_VERSION
 class NoTextExtractor:
     def extract_pages(self, _document):
         return []
+
+
+class CorruptFileExtractor:
+    def extract_pages(self, _document):
+        raise UnsupportedFileError("This DOCX file could not be opened. It may be corrupt.")
 
 
 class UnusedVectorService:
@@ -80,6 +94,63 @@ class InsightVectorService(RecordingVectorService):
 class FailingInsightVectorService(RecordingVectorService):
     def generate_document_insight(self, _sources):
         raise RuntimeError("insight unavailable")
+
+
+class StaticStorage:
+    def __init__(self, data: bytes):
+        self.data = data
+        self.preview_pdf = None
+
+    def download_pdf(self, _document):
+        return self.data
+
+    def upload_preview_pdf(self, _document, content: bytes):
+        self.preview_pdf = content
+
+class StaticPreviewConverter:
+    def __init__(self, preview_pdf: bytes):
+        self.preview_pdf = preview_pdf
+        self.calls = []
+
+    def convert_to_pdf(self, data: bytes, document_format: str) -> bytes:
+        self.calls.append({"data": data, "format": document_format})
+        return self.preview_pdf
+
+def _blank_pdf_bytes(page_count: int) -> bytes:
+    import fitz
+
+    pdf = fitz.open()
+    for _ in range(page_count):
+        pdf.new_page()
+    return pdf.tobytes()
+
+def _text_pdf_bytes(*page_texts: str) -> bytes:
+    import fitz
+
+    pdf = fitz.open()
+    for text in page_texts:
+        page = pdf.new_page()
+        page.insert_text((72, 72), text)
+    return pdf.tobytes()
+
+def _document_with_job(db_session, clerk_id: str, **overrides) -> tuple[Document, ProcessingJob]:
+    user = User(clerk_user_id=clerk_id, email=f"{clerk_id}@example.com")
+    fields = {
+        "user": user,
+        "original_filename": "scan.pdf",
+        "content_type": "application/pdf",
+        "file_size_bytes": 200,
+        "status": DocumentStatus.UPLOADED,
+        "wasabi_bucket": "bucket",
+        "wasabi_object_key": "users/user/documents/doc/original.pdf",
+        "pinecone_namespace": "test",
+    }
+    fields.update(overrides)
+    document = Document(**fields)
+    job = ProcessingJob(user=user, document=document, status=ProcessingJobStatus.QUEUED, current_step="queued")
+    db_session.add_all([user, document, job])
+    db_session.commit()
+    return document, job
 
 
 def test_no_text_processing_marks_document_and_job_failed(db_session):
@@ -269,6 +340,28 @@ def test_chunk_pages_splits_long_pages_with_token_overlap(db_session):
     assert [chunk.page_start for chunk in chunks] == [3, 3]
 
 
+def test_document_text_extractor_stores_preview_pdf_and_extracts_rendered_pages(db_session):
+    document, _job = _document_with_job(
+        db_session,
+        "user_preview_extract",
+        original_filename="brief.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        format="docx",
+        wasabi_object_key="users/user/documents/doc/original.docx",
+    )
+    preview_pdf = _text_pdf_bytes("Rendered first page text", "Rendered second page text")
+    storage = StaticStorage(b"original docx bytes")
+    converter = StaticPreviewConverter(preview_pdf)
+
+    pages = DocumentTextExtractor(storage, converter).extract_pages(document)
+
+    assert converter.calls == [{"data": b"original docx bytes", "format": "docx"}]
+    assert storage.preview_pdf == preview_pdf
+    assert [page.page_number for page in pages] == [1, 2]
+    assert "Rendered first page text" in pages[0].text
+    assert "Rendered second page text" in pages[1].text
+    assert document.page_count == 2
+
 def test_processing_fails_before_embedding_when_pdf_exceeds_page_limit(db_session):
     user = User(clerk_user_id="user_page_limit", email="limit@example.com")
     document = Document(
@@ -308,3 +401,129 @@ def test_processing_fails_before_embedding_when_pdf_exceeds_page_limit(db_sessio
     assert document.failure_code == "max_pdf_pages_exceeded"
     assert job.status == ProcessingJobStatus.FAILED
     assert job.error_code == "max_pdf_pages_exceeded"
+
+
+def test_no_text_pdf_failure_records_page_count(db_session):
+    document, job = _document_with_job(db_session, "user_no_text_pages")
+
+    with pytest.raises(NoExtractableTextError):
+        process_document(
+            db_session,
+            document.id,
+            extractor=DocumentTextExtractor(StaticStorage(_blank_pdf_bytes(3))),
+            vector_service=UnusedVectorService(),
+            max_pdf_pages=300,
+        )
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+    assert document.page_count == 3
+    assert document.failure_code == "no_extractable_text"
+    assert job.error_code == "no_extractable_text"
+
+
+def test_no_text_pdf_over_page_cap_fails_as_max_pages(db_session):
+    document, job = _document_with_job(db_session, "user_no_text_cap")
+
+    with pytest.raises(MaxPagesExceededError):
+        process_document(
+            db_session,
+            document.id,
+            extractor=DocumentTextExtractor(StaticStorage(_blank_pdf_bytes(3))),
+            vector_service=UnusedVectorService(),
+            max_pdf_pages=2,
+        )
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+    assert document.page_count == 3
+    assert document.failure_code == "max_pdf_pages_exceeded"
+    assert "3 pages" in document.failure_message
+    assert job.error_code == "max_pdf_pages_exceeded"
+
+
+def test_unknown_format_document_fails_unsupported_file(db_session):
+    document, job = _document_with_job(
+        db_session, "user_unknown_format", original_filename="weird.xyz", format="xyz"
+    )
+
+    with pytest.raises(UnsupportedFileError):
+        process_document(
+            db_session,
+            document.id,
+            extractor=DocumentTextExtractor(StaticStorage(b"binary soup")),
+            vector_service=UnusedVectorService(),
+        )
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+    assert document.failure_code == "unsupported_file"
+    assert "xyz" in document.failure_message
+    assert job.error_code == "unsupported_file"
+
+
+def test_txt_over_page_cap_message_counts_sections(db_session):
+    document, job = _document_with_job(
+        db_session, "user_txt_cap", original_filename="notes.txt", content_type="text/plain", format="txt"
+    )
+    text = " ".join(f"word{index}" for index in range(900)).encode("utf-8")  # two 800-word sections
+
+    with pytest.raises(MaxPagesExceededError):
+        process_document(
+            db_session,
+            document.id,
+            extractor=DocumentTextExtractor(StaticStorage(text)),
+            vector_service=UnusedVectorService(),
+            max_pdf_pages=1,
+        )
+
+    db_session.refresh(document)
+    assert document.failure_code == "max_pdf_pages_exceeded"
+    assert "2 sections" in document.failure_message
+    assert "1 sections" in document.failure_message
+
+
+def test_unsupported_file_processing_marks_document_and_job_failed(db_session):
+    user = User(clerk_user_id="user_unsupported", email="unsupported@example.com")
+    document = Document(
+        user=user,
+        original_filename="corrupt.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        format="docx",
+        file_size_bytes=200,
+        status=DocumentStatus.UPLOADED,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.docx",
+        pinecone_namespace="test",
+    )
+    job = ProcessingJob(
+        user=user,
+        document=document,
+        status=ProcessingJobStatus.QUEUED,
+        current_step="queued",
+    )
+    db_session.add_all([user, document, job])
+    db_session.commit()
+
+    try:
+        process_document(
+            db_session,
+            document.id,
+            extractor=CorruptFileExtractor(),
+            vector_service=UnusedVectorService(),
+        )
+    except UnsupportedFileError:
+        pass
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+
+    assert document.status == DocumentStatus.FAILED
+    assert document.failure_code == "unsupported_file"
+    assert "could not be opened" in document.failure_message
+    assert job.status == ProcessingJobStatus.FAILED
+    assert job.error_code == "unsupported_file"
+
+
+
+

@@ -5,6 +5,7 @@ import {
   getDocumentProcessingStatus,
   listDocuments,
   mapDocumentSummary,
+  moveDocument,
   sendChatMessage,
   uploadDocument
 } from "./documents";
@@ -123,6 +124,69 @@ describe("document API helpers", () => {
 
     expect(result.documentId).toBe("doc-1");
     expect(uploadedBody).toBeInstanceOf(FormData);
+  });
+
+  it("includes the folder id when uploading into a folder", async () => {
+    let uploadedBody: BodyInit | null | undefined;
+    const client = new ApiClient({
+      fetcher: async (_input, init) => {
+        uploadedBody = init?.body;
+        return new Response(JSON.stringify({ id: "doc-1", status: "uploaded", processing_job_id: "job-1" }), {
+          status: 201
+        });
+      }
+    });
+
+    await uploadDocument(client, new File(["%PDF"], "paper.pdf", { type: "application/pdf" }), "folder-1");
+
+    expect((uploadedBody as FormData).get("folder_id")).toBe("folder-1");
+  });
+
+  it("moves a document into a folder through the PATCH endpoint", async () => {
+    const client = new ApiClient({
+      fetcher: async (input, init) => {
+        expect(input).toBe("/api/documents/doc-1");
+        expect(init?.method).toBe("PATCH");
+        expect(init?.body).toBe(JSON.stringify({ folder_id: "folder-1" }));
+        return new Response(
+          JSON.stringify({
+            id: "doc-1",
+            folder_id: "folder-1",
+            original_filename: "paper.pdf",
+            status: "ready",
+            file_size_bytes: 1024,
+            created_at: "2026-06-13T00:00:00Z"
+          }),
+          { status: 200 }
+        );
+      }
+    });
+
+    await expect(moveDocument(client, "doc-1", "folder-1")).resolves.toMatchObject({
+      id: "doc-1",
+      folderId: "folder-1"
+    });
+  });
+
+  it("moves a document back to the library with a null folder id", async () => {
+    const client = new ApiClient({
+      fetcher: async (_input, init) => {
+        expect(init?.body).toBe(JSON.stringify({ folder_id: null }));
+        return new Response(
+          JSON.stringify({
+            id: "doc-1",
+            folder_id: null,
+            original_filename: "paper.pdf",
+            status: "ready",
+            file_size_bytes: 1024,
+            created_at: "2026-06-13T00:00:00Z"
+          }),
+          { status: 200 }
+        );
+      }
+    });
+
+    await expect(moveDocument(client, "doc-1", null)).resolves.toMatchObject({ id: "doc-1", folderId: undefined });
   });
 
   it("gets document processing status", async () => {

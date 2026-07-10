@@ -2,19 +2,88 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
-from app.models import Document, DocumentStatus, User
+from app.models import Document, DocumentChunk, DocumentStatus, User
+from app.services.processing import DEFAULT_CHUNK_OVERLAP_TOKENS
 
 
-def test_upload_rejects_non_pdf(authenticated_client):
+class StaticDocumentStorage:
+    def __init__(self, *, original: bytes = b"%PDF-original", preview: bytes = b"%PDF-preview"):
+        self.original = original
+        self.preview = preview
+
+    def download_pdf(self, _document):
+        return self.original
+
+    def download_preview_pdf(self, _document):
+        return self.preview
+
+@pytest.mark.parametrize(
+    ("filename", "content_type", "expected_format"),
+    [
+        ("paper.pdf", "application/pdf", "pdf"),
+        ("notes.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+        ("deck.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"),
+        ("notes.txt", "text/plain", "txt"),
+        ("memo.rtf", "application/rtf", "rtf"),
+        ("memo.rtf", "text/rtf", "rtf"),
+        # Windows maps .rtf to application/msword, so Chrome/Edge send that.
+        ("memo.rtf", "application/msword", "rtf"),
+        ("memo.rtf", "text/richtext", "rtf"),
+        # Browsers often send a generic content type; the extension decides.
+        ("notes.docx", "application/octet-stream", "docx"),
+    ],
+)
+
+
+def test_upload_accepts_supported_formats(authenticated_client, db_session, filename, content_type, expected_format):
     response = authenticated_client.post(
         "/api/documents",
-        files={"file": ("notes.txt", BytesIO(b"hello"), "text/plain")},
+        files={"file": (filename, BytesIO(b"fake file body"), content_type)},
     )
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Only PDF uploads are supported"
+    assert response.status_code == 201
+    document = db_session.get(Document, UUID(response.json()["id"]))
+    assert document.format == expected_format
+    assert document.wasabi_object_key.endswith(f"/original.{expected_format}")
+
+
+@pytest.mark.parametrize(
+    ("filename", "content_type"),
+    [
+        ("virus.exe", "application/octet-stream"),
+        ("data.csv", "text/csv"),
+        ("notes", "text/plain"),
+        # Extension/content-type mismatch is rejected too.
+        ("notes.docx", "application/pdf"),
+    ],
+)
+
+
+def test_upload_rejects_unsupported_files_with_415(authenticated_client, filename, content_type):
+    response = authenticated_client.post(
+        "/api/documents",
+        files={"file": (filename, BytesIO(b"hello"), content_type)},
+    )
+
+    assert response.status_code == 415
+    assert response.json()["detail"] == "Unsupported file type. Upload a PDF, DOCX, PPTX, TXT, or RTF file."
+
+
+def test_document_format_is_returned_by_the_api(authenticated_client):
+    upload = authenticated_client.post(
+        "/api/documents",
+        files={"file": ("notes.txt", BytesIO(b"plain text"), "text/plain")},
+    )
+    document_id = upload.json()["id"]
+
+    detail = authenticated_client.get(f"/api/documents/{document_id}")
+    listing = authenticated_client.get("/api/documents")
+
+    assert detail.json()["format"] == "txt"
+    assert listing.json()["items"][0]["format"] == "txt"
 
 
 def test_upload_rejects_oversized_pdf(authenticated_client, app):
@@ -33,7 +102,7 @@ def test_upload_rejects_oversized_pdf(authenticated_client, app):
     )
 
     assert response.status_code == 413
-    assert response.json()["detail"] == "PDF exceeds the configured upload limit"
+    assert response.json()["detail"] == "File exceeds the configured upload limit"
 
 
 def test_upload_rejects_oversized_pdf_without_content_length(authenticated_client, app):
@@ -53,7 +122,7 @@ def test_upload_rejects_oversized_pdf_without_content_length(authenticated_clien
     )
 
     assert response.status_code == 413
-    assert response.json()["detail"] == "PDF exceeds the configured upload limit"
+    assert response.json()["detail"] == "File exceeds the configured upload limit"
 
 
 def test_upload_creates_document_and_processing_job(authenticated_client, db_session):
@@ -159,8 +228,166 @@ def test_file_url_requires_ownership(authenticated_client, db_session):
     assert response.status_code == 404
 
 
+def test_preview_file_returns_original_pdf_for_pdf(authenticated_client, db_session, monkeypatch):
+    user = User(clerk_user_id="user_2abc123", email="casey@example.com")
+    document = Document(
+        user=user,
+        original_filename="paper.pdf",
+        content_type="application/pdf",
+        format="pdf",
+        file_size_bytes=100,
+        status=DocumentStatus.READY,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pdf",
+        pinecone_namespace="test",
+    )
+    db_session.add_all([user, document])
+    db_session.commit()
+    monkeypatch.setattr("app.api.routes.get_storage_service", lambda _settings: StaticDocumentStorage(original=b"pdf bytes"))
+
+    response = authenticated_client.get(f"/api/documents/{document.id}/preview-file")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.content == b"pdf bytes"
+
+def test_preview_file_returns_generated_pdf_for_convertible_document(authenticated_client, db_session, monkeypatch):
+    user = User(clerk_user_id="user_2abc123", email="casey@example.com")
+    document = Document(
+        user=user,
+        original_filename="deck.pptx",
+        content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        format="pptx",
+        file_size_bytes=100,
+        status=DocumentStatus.READY,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.pptx",
+        pinecone_namespace="test",
+    )
+    db_session.add_all([user, document])
+    db_session.commit()
+    monkeypatch.setattr("app.api.routes.get_storage_service", lambda _settings: StaticDocumentStorage(preview=b"preview pdf"))
+
+    response = authenticated_client.get(f"/api/documents/{document.id}/preview-file")
+
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == 'inline; filename="deck.pdf"'
+    assert response.content == b"preview pdf"
+
+def test_preview_file_rejects_txt_documents(authenticated_client, db_session):
+    user = User(clerk_user_id="user_2abc123", email="casey@example.com")
+    document = Document(
+        user=user,
+        original_filename="notes.txt",
+        content_type="text/plain",
+        format="txt",
+        file_size_bytes=100,
+        status=DocumentStatus.READY,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.txt",
+        pinecone_namespace="test",
+    )
+    db_session.add_all([user, document])
+    db_session.commit()
+
+    response = authenticated_client.get(f"/api/documents/{document.id}/preview-file")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Preview PDF is not available for this file type"
+
 def test_missing_document_id_returns_404(authenticated_client):
     response = authenticated_client.get(f"/api/documents/{uuid4()}")
+
+    assert response.status_code == 404
+
+
+def test_document_pages_groups_chunks_and_strips_overlap(authenticated_client, db_session):
+    user = User(
+        clerk_user_id="user_2abc123",
+        email="casey@example.com",
+        name="Casey Example",
+    )
+    document = Document(
+        user=user,
+        original_filename="notes.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        format="docx",
+        file_size_bytes=100,
+        status=DocumentStatus.READY,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/user/documents/doc/original.docx",
+        pinecone_namespace="test",
+    )
+    # Two chunks on section 1 that overlap by DEFAULT_CHUNK_OVERLAP_TOKENS tokens,
+    # and one chunk on section 2 to prove pages are ordered by chunk_index.
+    overlap_word = "shared"
+    tail = f"{overlap_word} " * DEFAULT_CHUNK_OVERLAP_TOKENS
+    chunk_one = DocumentChunk(
+        user=user,
+        document=document,
+        chunk_index=0,
+        page_start=1,
+        page_end=1,
+        text=f"opening section text {tail}".strip(),
+        text_excerpt="opening section text",
+        pinecone_vector_id="doc_chunk_0",
+    )
+    chunk_two = DocumentChunk(
+        user=user,
+        document=document,
+        chunk_index=1,
+        page_start=1,
+        page_end=1,
+        text=f"{tail}continuation words here".strip(),
+        text_excerpt="continuation words here",
+        pinecone_vector_id="doc_chunk_1",
+    )
+    chunk_three = DocumentChunk(
+        user=user,
+        document=document,
+        chunk_index=2,
+        page_start=2,
+        page_end=2,
+        text="second section body",
+        text_excerpt="second section body",
+        pinecone_vector_id="doc_chunk_2",
+    )
+    db_session.add_all([user, document, chunk_one, chunk_two, chunk_three])
+    db_session.commit()
+
+    response = authenticated_client.get(f"/api/documents/{document.id}/pages")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["document_id"] == str(document.id)
+    assert body["format"] == "docx"
+    assert [page["page_number"] for page in body["pages"]] == [1, 2]
+    # Overlap tokens between the two section-1 chunks are dropped once, so the
+    # word appears exactly the count of the first chunk's tail (not doubled).
+    first_page_text = body["pages"][0]["text"]
+    assert first_page_text.startswith("opening section text")
+    assert first_page_text.endswith("continuation words here")
+    assert first_page_text.count(overlap_word) == DEFAULT_CHUNK_OVERLAP_TOKENS
+    assert body["pages"][1]["text"] == "second section body"
+
+
+def test_document_pages_requires_ownership(authenticated_client, db_session):
+    owner = User(clerk_user_id="owner_pages", email="ownerpages@example.com")
+    other_document = Document(
+        user=owner,
+        original_filename="private.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        format="docx",
+        file_size_bytes=100,
+        status=DocumentStatus.READY,
+        wasabi_bucket="bucket",
+        wasabi_object_key="users/owner/documents/doc/original.docx",
+        pinecone_namespace="test",
+    )
+    db_session.add_all([owner, other_document])
+    db_session.commit()
+
+    response = authenticated_client.get(f"/api/documents/{other_document.id}/pages")
 
     assert response.status_code == 404
 
@@ -273,3 +500,7 @@ def test_unhandled_error_returns_sanitized_500(app, authenticated_client, monkey
     assert response.status_code == 500
     assert response.json() == {"detail": "Internal server error"}
     assert "secret" not in response.text
+
+
+
+

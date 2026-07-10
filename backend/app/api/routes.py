@@ -1,30 +1,33 @@
-from base64 import urlsafe_b64decode, urlsafe_b64encode
-from datetime import datetime
 from io import BytesIO
 import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
+from app.api.chat_routes import message_payload, validated_model
 from app.api.deps import get_current_user, get_owned_document
+from app.api.pagination import decode_cursor, encode_cursor
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.models import (
-    Chat,
     Document,
     DocumentStatus,
-    Message,
+    Folder,
     ProcessingJob,
     ProcessingJobStatus,
     User,
 )
+from app.models import DocumentChunk
 from app.models.mixins import utc_now
 from app.services.chat import get_or_create_chat, stream_chat_response
-from app.services.storage import StorageService, build_document_object_key, get_storage_service
+from app.services.preview import PREVIEW_PDF_FORMATS, DocumentPreviewConverter
+from app.services.processing import DEFAULT_CHUNK_OVERLAP_TOKENS, UnsupportedFileError
+from app.services.storage import build_document_object_key, get_storage_service
+from app.services.usage import check_and_increment, check_storage
 from app.services.vector import VectorService, get_vector_service
 from app.worker import enqueue_document_processing
 
@@ -40,6 +43,10 @@ def _inline_pdf_disposition(filename: str) -> str:
     safe_filename = filename.replace("\\", "_").replace('"', "'")
     return f'inline; filename="{safe_filename}"'
 
+
+def _preview_pdf_filename(filename: str) -> str:
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return f"{stem}.pdf"
 
 @router.get("/health")
 def health() -> dict[str, str]:
@@ -62,10 +69,26 @@ def me(current_user: User = Depends(get_current_user)) -> dict[str, str | None]:
     }
 
 
+def _owned_folder_or_422(db: Session, user: User, raw_folder_id: object) -> Folder:
+    """Resolve a client-supplied folder id; unknown, malformed, or cross-user
+    folders are a validation error (422), not a 404, because the folder is
+    payload here rather than the addressed resource."""
+    try:
+        folder_uuid = UUID(str(raw_folder_id))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Folder not found")
+    folder = db.get(Folder, folder_uuid)
+    if folder is None or folder.user_id != user.id:
+        raise HTTPException(status_code=422, detail="Folder not found")
+    return folder
+
+
 def _document_summary(document: Document) -> dict[str, object]:
     return {
         "id": str(document.id),
+        "folder_id": str(document.folder_id) if document.folder_id else None,
         "original_filename": document.original_filename,
+        "format": document.format,
         "status": _enum_value(document.status),
         "file_size_bytes": document.file_size_bytes,
         "page_count": document.page_count,
@@ -76,29 +99,14 @@ def _document_summary(document: Document) -> dict[str, object]:
         "failure_message": document.failure_message,
     }
 
-
 DOCUMENT_LIST_DEFAULT_LIMIT = 50
 DOCUMENT_LIST_MAX_LIMIT = 100
-
-
-def _encode_document_cursor(document: Document) -> str:
-    payload = f"{document.created_at.isoformat()}|{document.id}"
-    return urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
-
-
-def _decode_document_cursor(cursor: str) -> tuple[datetime, UUID]:
-    try:
-        padded_cursor = cursor + ("=" * (-len(cursor) % 4))
-        raw_cursor = urlsafe_b64decode(padded_cursor.encode("ascii")).decode("utf-8")
-        created_at, document_id = raw_cursor.split("|", 1)
-        return datetime.fromisoformat(created_at), UUID(document_id)
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise HTTPException(status_code=422, detail="Invalid document cursor") from exc
 
 
 @router.get("/api/documents")
 def list_documents(
     status_filter: Annotated[DocumentStatus | None, Query(alias="status")] = None,
+    folder_id: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=DOCUMENT_LIST_MAX_LIMIT)] = DOCUMENT_LIST_DEFAULT_LIMIT,
     cursor: str | None = None,
     current_user: User = Depends(get_current_user),
@@ -112,8 +120,15 @@ def list_documents(
     )
     if status_filter:
         statement = statement.where(Document.status == status_filter)
+    if folder_id == "root":
+        statement = statement.where(Document.folder_id.is_(None))
+    elif folder_id:
+        try:
+            statement = statement.where(Document.folder_id == UUID(folder_id))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="folder_id must be a UUID or 'root'")
     if cursor:
-        cursor_created_at, cursor_document_id = _decode_document_cursor(cursor)
+        cursor_created_at, cursor_document_id = decode_cursor(cursor, detail="Invalid document cursor")
         statement = statement.where(
             or_(
                 Document.created_at < cursor_created_at,
@@ -122,27 +137,47 @@ def list_documents(
         )
     documents = list(db.scalars(statement).all())
     visible_documents = documents[:limit]
-    next_cursor = _encode_document_cursor(visible_documents[-1]) if len(documents) > limit else None
+    next_cursor = (
+        encode_cursor(visible_documents[-1].created_at, visible_documents[-1].id)
+        if len(documents) > limit
+        else None
+    )
     return {"items": [_document_summary(document) for document in visible_documents], "next_cursor": next_cursor}
-
 
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 
+# extension -> (format, canonical content type). Browsers are inconsistent, so a
+# generic content type falls back to the extension.
+UPLOAD_FORMATS: dict[str, tuple[str, str]] = {
+    ".pdf": ("pdf", "application/pdf"),
+    ".docx": ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    ".pptx": ("pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+    ".txt": ("txt", "text/plain"),
+    ".rtf": ("rtf", "application/rtf"),
+}
+# Windows registers .rtf as application/msword, so that's what Chrome/Edge send.
+EXTRA_UPLOAD_CONTENT_TYPES: dict[str, set[str]] = {"rtf": {"text/rtf", "application/msword", "text/richtext"}}
+GENERIC_UPLOAD_CONTENT_TYPES = {"", "application/octet-stream"}
+UNSUPPORTED_UPLOAD_DETAIL = "Unsupported file type. Upload a PDF, DOCX, PPTX, TXT, or RTF file."
 
-def _validate_pdf_upload(file: UploadFile, content: bytes, settings: Settings) -> None:
-    filename = file.filename or ""
-    if not filename.lower().endswith(".pdf") or file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF uploads are supported")
 
-    max_bytes = settings.max_upload_mb * 1024 * 1024
-    if len(content) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="PDF exceeds the configured upload limit",
-        )
+def _resolve_upload_format(file: UploadFile) -> tuple[str, str]:
+    """Return (format, content_type) or raise 415."""
+    filename = (file.filename or "").lower()
+    extension = filename[filename.rfind(".") :] if "." in filename else ""
+    entry = UPLOAD_FORMATS.get(extension)
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=UNSUPPORTED_UPLOAD_DETAIL)
 
+    document_format, canonical_type = entry
+    content_type = (file.content_type or "").lower()
+    if content_type in GENERIC_UPLOAD_CONTENT_TYPES:
+        return document_format, canonical_type
+    if content_type == canonical_type or content_type in EXTRA_UPLOAD_CONTENT_TYPES.get(document_format, set()):
+        return document_format, content_type
+    raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=UNSUPPORTED_UPLOAD_DETAIL)
 
-async def _read_pdf_upload(file: UploadFile, max_bytes: int) -> bytes:
+async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
     chunks = bytearray()
     while True:
         chunk = await file.read(UPLOAD_READ_CHUNK_BYTES)
@@ -152,7 +187,7 @@ async def _read_pdf_upload(file: UploadFile, max_bytes: int) -> bytes:
         if len(chunks) > max_bytes:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="PDF exceeds the configured upload limit",
+                detail="File exceeds the configured upload limit",
             )
     return bytes(chunks)
 
@@ -160,26 +195,35 @@ async def _read_pdf_upload(file: UploadFile, max_bytes: int) -> bytes:
 @router.post("/api/documents", status_code=status.HTTP_201_CREATED)
 async def upload_document(
     file: Annotated[UploadFile, File()],
+    folder_id: Annotated[str | None, Form()] = None,
     content_length: Annotated[str | None, Header(alias="content-length")] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
+    folder = _owned_folder_or_422(db, current_user, folder_id) if folder_id else None
     max_bytes = settings.max_upload_mb * 1024 * 1024
     parsed_content_length = int(content_length) if content_length and content_length.isdigit() else None
     if parsed_content_length is not None and parsed_content_length > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="PDF exceeds the configured upload limit",
+            detail="File exceeds the configured upload limit",
         )
 
-    content = await _read_pdf_upload(file, max_bytes)
-    _validate_pdf_upload(file, content, settings)
+    document_format, content_type = _resolve_upload_format(file)
+    content = await _read_upload(file, max_bytes)
+
+    # Plan limits before any document row exists; the increment only becomes
+    # durable at the final commit, so a failed upload does not consume quota.
+    check_and_increment(db, current_user, "upload")
+    check_storage(db, current_user, len(content))
 
     document = Document(
         user_id=current_user.id,
-        original_filename=file.filename or "upload.pdf",
-        content_type=file.content_type or "application/pdf",
+        folder_id=folder.id if folder else None,
+        original_filename=file.filename or f"upload.{document_format}",
+        content_type=content_type,
+        format=document_format,
         file_size_bytes=len(content),
         status=DocumentStatus.UPLOADED,
         wasabi_bucket=settings.wasabi_bucket,
@@ -188,7 +232,7 @@ async def upload_document(
     )
     db.add(document)
     db.flush()
-    document.wasabi_object_key = build_document_object_key(current_user.id, document.id)
+    document.wasabi_object_key = build_document_object_key(current_user.id, document.id, document_format)
 
     storage_service = get_storage_service(settings)
     try:
@@ -231,6 +275,25 @@ def document_detail(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     document = get_owned_document(db, current_user, document_id)
+    return _document_summary(document)
+
+
+@router.patch("/api/documents/{document_id}")
+def move_document(
+    document_id: UUID,
+    payload: dict[str, object],
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    document = get_owned_document(db, current_user, document_id)
+    if "folder_id" not in payload:
+        raise HTTPException(status_code=422, detail="folder_id is required")
+    raw_folder_id = payload["folder_id"]
+    document.folder_id = (
+        _owned_folder_or_422(db, current_user, raw_folder_id).id if raw_folder_id is not None else None
+    )
+    db.commit()
+    db.refresh(document)
     return _document_summary(document)
 
 
@@ -299,6 +362,50 @@ def document_file_url(
     return get_storage_service(settings).signed_file_url(document)
 
 
+@router.get("/api/documents/{document_id}/preview-file")
+def document_preview_file(
+    document_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    document = get_owned_document(db, current_user, document_id)
+    storage_service = get_storage_service(settings)
+    document_format = document.format or "pdf"
+    if document_format == "pdf":
+        preview_bytes = storage_service.download_pdf(document)
+        preview_filename = document.original_filename
+    elif document_format in PREVIEW_PDF_FORMATS:
+        preview_bytes = storage_service.download_preview_pdf(document)
+        preview_filename = _preview_pdf_filename(document.original_filename)
+        if not preview_bytes and document.status == DocumentStatus.READY:
+            original_bytes = storage_service.download_pdf(document)
+            if original_bytes:
+                try:
+                    preview_bytes = DocumentPreviewConverter(
+                        timeout_seconds=settings.document_preview_conversion_timeout_seconds
+                    ).convert_to_pdf(original_bytes, document_format)
+                    try:
+                        storage_service.upload_preview_pdf(document, preview_bytes)
+                    except Exception:
+                        logger.exception("Document preview PDF could not be cached", extra={"document_id": str(document.id)})
+                except UnsupportedFileError:
+                    logger.info("Document preview PDF could not be generated", extra={"document_id": str(document.id)})
+    else:
+        raise HTTPException(status_code=404, detail="Preview PDF is not available for this file type")
+
+    if not preview_bytes:
+        raise HTTPException(status_code=404, detail="Preview PDF is not available")
+
+    return StreamingResponse(
+        BytesIO(preview_bytes),
+        media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": _inline_pdf_disposition(preview_filename),
+        },
+    )
+
 @router.get("/api/documents/{document_id}/file")
 def document_file(
     document_id: UUID,
@@ -321,6 +428,50 @@ def document_file(
     )
 
 
+@router.get("/api/documents/{document_id}/pages")
+def document_pages(
+    document_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Extracted text grouped by page/section for the workspace preview.
+
+    Chunks are stored with a sliding window (overlap=DEFAULT_CHUNK_OVERLAP_TOKENS),
+    so joining chunks on the same page would repeat the overlap. Drop those
+    tokens from every chunk after the first on each page."""
+    document = get_owned_document(db, current_user, document_id)
+    chunks = db.scalars(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document.id)
+        .order_by(DocumentChunk.chunk_index)
+    ).all()
+
+    pages: list[dict[str, object]] = []
+    current_page: int | None = None
+    current_tokens: list[str] = []
+
+    def flush() -> None:
+        if current_page is None:
+            return
+        pages.append({"page_number": current_page, "text": " ".join(current_tokens).strip()})
+
+    for chunk in chunks:
+        chunk_tokens = chunk.text.split()
+        if chunk.page_start != current_page:
+            flush()
+            current_page = chunk.page_start
+            current_tokens = list(chunk_tokens)
+            continue
+        current_tokens.extend(chunk_tokens[DEFAULT_CHUNK_OVERLAP_TOKENS:])
+    flush()
+
+    return {
+        "document_id": str(document.id),
+        "format": document.format,
+        "pages": pages,
+    }
+
+
 @router.get("/api/documents/{document_id}/processing-status")
 def document_processing_status(
     document_id: UUID,
@@ -338,26 +489,6 @@ def document_processing_status(
     }
 
 
-def _message_payload(message: Message) -> dict[str, object]:
-    return {
-        "id": str(message.id),
-        "role": _enum_value(message.role),
-        "content": message.content,
-        "created_at": message.created_at.isoformat(),
-        "sources": [
-            {
-                "source_id": str(source.id),
-                "chunk_id": str(source.chunk_id) if source.chunk_id else None,
-                "page_start": source.page_start,
-                "page_end": source.page_end,
-                "excerpt": source.excerpt,
-                "score": source.score,
-            }
-            for source in message.sources
-        ],
-    }
-
-
 @router.get("/api/documents/{document_id}/chat")
 def get_document_chat(
     document_id: UUID,
@@ -372,8 +503,9 @@ def get_document_chat(
             "id": str(chat.id),
             "document_id": str(document.id),
             "title": chat.title,
+            "model": chat.model,
         },
-        "messages": [_message_payload(message) for message in chat.messages],
+        "messages": [message_payload(message) for message in chat.messages],
     }
 
 
@@ -389,13 +521,22 @@ def stream_document_chat(
     content = payload.get("content", "").strip()
     if not content:
         raise HTTPException(status_code=422, detail="Message content is required")
+    model = validated_model(payload, settings)
 
     vector_service = get_vector_service(settings)
     return StreamingResponse(
-        stream_chat_response(db, current_user, document, content, vector_service),
+        stream_chat_response(db, current_user, document, content, vector_service, model=model, settings=settings),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
     )
+
+
+
+
+
+
+
+
