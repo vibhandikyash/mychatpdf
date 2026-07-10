@@ -33,6 +33,8 @@ from app.services.vector import (
     VectorService,
     build_overview_sources,
     is_front_matter_chunk,
+    multi_document_context_source_limit,
+    question_needs_per_document_answer,
     question_needs_short_summary,
 )
 
@@ -164,7 +166,7 @@ def folder_scope(folder: Folder) -> list[Document]:
 def get_or_create_chat(db: Session, user: User, document: Document) -> Chat:
     chat = db.scalar(
         select(Chat)
-        .where(Chat.document_id == document.id, Chat.user_id == user.id)
+        .where(Chat.document_id == document.id, Chat.user_id == user.id, Chat.deleted_at.is_(None))
         .order_by(Chat.created_at)
         .limit(1)
     )
@@ -329,7 +331,19 @@ def _overview_sources(db: Session, document: Document) -> list[RetrievedSource]:
             .order_by(DocumentChunk.chunk_index)
         )
     )
-    return build_overview_sources(chunks)
+    return [
+        replace(source, document_id=str(document.id), document_filename=document.original_filename)
+        for source in build_overview_sources(chunks)
+    ]
+
+
+def _per_document_overview_sources(db: Session, documents: list[Document]) -> list[RetrievedSource]:
+    sources: list[RetrievedSource] = []
+    for document in documents:
+        document_sources = _overview_sources(db, document)
+        if document_sources:
+            sources.append(document_sources[0])
+    return sources
 
 
 def _cached_insight_answer(document: Document, question: str) -> str | None:
@@ -606,12 +620,18 @@ def _generate_chat_response(
                     vector_sources = vector_service.query_document(user, single_document, contextual_question)
                     sources = _merge_sources(exact_sources, keyword_sources, vector_sources, limit=limit)
                 else:
+                    limit = multi_document_context_source_limit(limit)
+                    baseline_sources = (
+                        _per_document_overview_sources(db, scope)
+                        if question_needs_per_document_answer(content)
+                        else []
+                    )
                     vector_sources = vector_service.query_scope(user, scope, contextual_question)
                     # Cap lexical matches at half the budget so keyword hits
                     # (collected in scope order) cannot starve query_scope's
                     # fair per-document vector selection.
                     lexical = _merge_sources(exact_sources, keyword_sources, limit=limit // 2)
-                    sources = _merge_sources(lexical, vector_sources, limit=limit)
+                    sources = _merge_sources(baseline_sources, lexical, vector_sources, limit=limit)
             sources = _hydrate_source_context(db, scope, sources)
             answer_kwargs = {"model": answer_model} if answer_model else {}
             for token in vector_service.stream_answer_tokens(contextual_question, sources, **answer_kwargs):

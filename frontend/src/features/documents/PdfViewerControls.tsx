@@ -12,7 +12,7 @@ interface PdfViewerControlsProps {
   onToggleNativePreview: () => void;
 }
 
-const MIN_ZOOM = 75;
+const MIN_ZOOM = 40;
 const MAX_ZOOM = 175;
 
 export function PdfViewerControls({
@@ -28,12 +28,9 @@ export function PdfViewerControls({
 }: PdfViewerControlsProps) {
   return (
     <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-sea">PDF viewer</p>
-        <p className="text-sm font-medium text-ink">
-          Page {currentPage} of {totalPages}
-        </p>
-      </div>
+      <p className="text-sm font-semibold text-ink">
+        Page {currentPage} of {totalPages}
+      </p>
       <div className="flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
@@ -75,7 +72,7 @@ export function PdfViewerControls({
         {hasPdfUrl && canUseNativePreview ? (
           <button
             type="button"
-            aria-label={isNativeMode ? "Use smooth PDF viewer" : "Use native PDF preview"}
+            aria-label={isNativeMode ? "Use smooth document viewer" : "Use native document preview"}
             onClick={onToggleNativePreview}
             className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-ink transition hover:bg-slate-50"
           >
@@ -87,3 +84,5 @@ export function PdfViewerControls({
     </header>
   );
 }
+
+

@@ -49,6 +49,9 @@ class Chat(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Soft delete, mirroring documents: deleted chats stay queryable so the
+    # dashboard activity feed can report the deletion.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="chats")
     document: Mapped["Document | None"] = relationship(back_populates="chats")

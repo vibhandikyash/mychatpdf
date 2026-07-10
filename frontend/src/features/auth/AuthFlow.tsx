@@ -16,7 +16,7 @@ import {
 import { type AuthCopy, type AuthMode } from "./authConfig";
 import { BrandName, PRODUCT_NAME } from "../brand/Brand";
 
-type AuthStep = "credentials" | "verify-email";
+type AuthStep = "credentials" | "verify-email" | "verify-sign-in";
 
 const OAUTH_CALLBACK_PATH = "/sso-callback";
 const MIN_PASSWORD_LENGTH = 8;
@@ -89,6 +89,22 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
           return;
         }
 
+        if (result.status === "needs_second_factor") {
+          const emailCodeFactor = result.supportedSecondFactors?.find(
+            (factor) => factor.strategy === "email_code"
+          );
+          if (emailCodeFactor) {
+            await signInState.signIn.prepareSecondFactor({
+              strategy: "email_code",
+              emailAddressId: emailCodeFactor.emailAddressId
+            });
+            setVerificationCode("");
+            setStep("verify-sign-in");
+            setNotice({ tone: "info", message: `We sent a verification code to ${trimmedEmail}.` });
+            return;
+          }
+        }
+
         setNotice({
           tone: "error",
           message: "This account needs an additional verification step before it can open the workspace."
@@ -119,7 +135,7 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
   const handleVerificationSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!signUpState.isLoaded || !verificationCode.trim()) {
+    if (!isLoaded || !verificationCode.trim()) {
       return;
     }
 
@@ -127,10 +143,14 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
     setIsSubmitting(true);
 
     try {
-      const result = await signUpState.signUp.attemptEmailAddressVerification({ code: verificationCode.trim() });
+      const result =
+        step === "verify-sign-in"
+          ? await signInState.signIn.attemptSecondFactor({ strategy: "email_code", code: verificationCode.trim() })
+          : await signUpState.signUp.attemptEmailAddressVerification({ code: verificationCode.trim() });
 
       if (result.status === "complete" && result.createdSessionId) {
-        await signUpState.setActive({ session: result.createdSessionId, redirectUrl: redirectPath });
+        const setActive = step === "verify-sign-in" ? signInState.setActive : signUpState.setActive;
+        await setActive({ session: result.createdSessionId, redirectUrl: redirectPath });
         return;
       }
 
@@ -143,7 +163,7 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
   };
 
   const handleResendCode = async () => {
-    if (!signUpState.isLoaded) {
+    if (!isLoaded) {
       return;
     }
 
@@ -151,7 +171,11 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
     setIsSubmitting(true);
 
     try {
-      await signUpState.signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+      if (step === "verify-sign-in") {
+        await signInState.signIn.prepareSecondFactor({ strategy: "email_code" });
+      } else {
+        await signUpState.signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+      }
       setNotice({ tone: "info", message: `A new code was sent to ${trimmedEmail}.` });
     } catch (error) {
       setNotice({ tone: "error", message: getAuthErrorMessage(error) });
@@ -160,7 +184,7 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
     }
   };
 
-  if (step === "verify-email") {
+  if (step === "verify-email" || step === "verify-sign-in") {
     return (
       <form className="space-y-5" onSubmit={handleVerificationSubmit}>
         <Notice tone={notice?.tone ?? "info"} message={notice?.message ?? `Enter the code sent to ${trimmedEmail}.`} />
@@ -180,7 +204,11 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
         </Field>
 
         <button type="submit" className={primaryButtonClassName} disabled={isBusy}>
-          <ButtonContent loading={isSubmitting} loadingLabel="Verifying" label="Verify email" />
+          <ButtonContent
+            loading={isSubmitting}
+            loadingLabel="Verifying"
+            label={step === "verify-sign-in" ? "Verify code" : "Verify email"}
+          />
         </button>
 
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm">

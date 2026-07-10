@@ -1,4 +1,4 @@
-// Creates (or updates) and publishes the MyChatPDF content model in Contentful.
+// Creates (or updates) and publishes the MyPDFChat content model in Contentful.
 // Rerunnable: upserts every content type by fixed id.
 //
 // Usage:
@@ -52,15 +52,20 @@ const contentTypes = {
       sym("name", "Name", { required: true }),
       sym("variant", "Variant", {
         required: true,
-        validations: [{ in: ["hero", "features", "cta", "testimonial"] }],
+        validations: [{ in: ["hero", "features", "steps", "stats", "testimonial", "logos", "usecases", "faq", "cta"] }],
       }),
+      sym("badge", "Badge"),
       sym("heading", "Heading"),
       text("subheading", "Subheading"),
       text("body", "Body"),
       sym("ctaLabel", "CTA Label"),
       sym("ctaUrl", "CTA URL"),
+      sym("secondaryCtaLabel", "Secondary CTA Label"),
+      sym("secondaryCtaUrl", "Secondary CTA URL"),
       // JSON array of items; shape depends on variant:
-      // features -> [{ title, description }], testimonial -> [{ quote, author, role }]
+      // features -> [{ title, description, iconKey }], steps -> [{ title, description }],
+      // stats -> [{ value, label, description }], testimonial -> [{ quote, author, role }],
+      // logos -> [{ title }]
       obj("items", "Items"),
       int("order", "Order"),
     ],

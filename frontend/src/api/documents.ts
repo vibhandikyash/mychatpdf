@@ -318,6 +318,22 @@ export async function getDocumentFileObjectUrl(client: ApiClient, documentId: st
   return URL.createObjectURL(blob.type === "application/pdf" ? blob : new Blob([blob], { type: "application/pdf" }));
 }
 
+export interface DocumentPage {
+  pageNumber: number;
+  text: string;
+}
+
+interface BackendDocumentPagesResponse {
+  document_id: string;
+  format: DocumentFormat | null;
+  pages: Array<{ page_number: number; text: string }>;
+}
+
+export async function getDocumentPages(client: ApiClient, documentId: string): Promise<DocumentPage[]> {
+  const response = await client.request<BackendDocumentPagesResponse>(`/api/documents/${documentId}/pages`);
+  return response.pages.map((page) => ({ pageNumber: page.page_number, text: page.text }));
+}
+
 export async function getDocumentProcessingStatus(client: ApiClient, documentId: string) {
   const response = await client.request<BackendProcessingStatus>(`/api/documents/${documentId}/processing-status`);
   return {

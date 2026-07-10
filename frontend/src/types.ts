@@ -89,13 +89,19 @@ export interface BillingPlan {
   allowedChatModels: string[] | null;
 }
 
+export interface UpcomingSubscriptionSummary {
+  plan: { id: string; name: string; interval: PlanInterval };
+  status: string;
+  startsAt: string | null;
+}
+
 export interface SubscriptionSummary {
   plan: { id: string; name: string; interval: PlanInterval };
   status: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  upcomingSubscription: UpcomingSubscriptionSummary | null;
 }
-
 export interface UsageQuota {
   used: number;
   limit: number;

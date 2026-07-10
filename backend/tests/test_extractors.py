@@ -159,3 +159,4 @@ def test_extract_pptx_includes_table_text():
 
     assert len(pages) == 1
     assert "Q4 | 9 million" in pages[0].text
+

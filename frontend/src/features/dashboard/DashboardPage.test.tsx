@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ApiClient } from "../../api/client";
@@ -103,5 +103,8 @@ describe("DashboardPage", () => {
       "You have reached the upload limit in your plan for this period."
     );
     expect(screen.getByRole("link", { name: /upgrade your plan/i })).toHaveAttribute("href", "/app/billing");
+    await waitFor(() => {
+      expect(screen.queryByRole("progressbar", { name: /upload progress/i })).not.toBeInTheDocument();
+    });
   });
 });

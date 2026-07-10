@@ -58,7 +58,14 @@ def test_dashboard_returns_stats_conversations_and_activity(authenticated_client
         created_at=base_time - timedelta(hours=2),
         updated_at=base_time - timedelta(hours=1),
     )
-    db_session.add_all([doc_early, doc_late, doc_deleted, chat_between, chat_oldest])
+    chat_deleted = Chat(
+        user=user,
+        title="Old research",
+        created_at=base_time - timedelta(hours=3),
+        updated_at=base_time - timedelta(hours=3),
+        deleted_at=base_time + timedelta(hours=3),
+    )
+    db_session.add_all([doc_early, doc_late, doc_deleted, chat_between, chat_oldest, chat_deleted])
     db_session.commit()
 
     response = authenticated_client.get("/api/dashboard")
@@ -81,6 +88,7 @@ def test_dashboard_returns_stats_conversations_and_activity(authenticated_client
 
     activity = body["recent_activity"]
     assert [(item["type"], item["label"]) for item in activity] == [
+        ("conversation_deleted", "Old research"),
         ("document_uploaded", "late.docx"),
         ("conversation_updated", "Contract questions"),
         ("document_uploaded", "early.pdf"),

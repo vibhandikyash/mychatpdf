@@ -1,4 +1,4 @@
-import { FileText, RefreshCw, Trash2, ExternalLink } from "lucide-react";
+import { FileText, RefreshCw, Trash2, ExternalLink, Loader2 } from "lucide-react";
 import { DocumentSummary, FolderSummary } from "../../types";
 import { documentStatusLabel, formatDate, formatFileSize, isProcessingStatus } from "./status";
 
@@ -10,9 +10,10 @@ interface DocumentLibraryProps {
   onRetry?: (documentId: string) => void;
   onMove?: (documentId: string, folderId: string | null) => void;
   compact?: boolean;
+  isLoading?: boolean;
 }
 
-export function DocumentLibrary({ documents, folders, onOpen, onDelete, onRetry, onMove, compact = false }: DocumentLibraryProps) {
+export function DocumentLibrary({ documents, folders, onOpen, onDelete, onRetry, onMove, compact = false, isLoading = false }: DocumentLibraryProps) {
   const table = (
     <div className="overflow-hidden rounded-lg border border-teal-100 bg-white shadow-panel">
       <div className="hidden grid-cols-[minmax(220px,1.4fr)_150px_120px_130px_180px] gap-4 border-b border-teal-100 bg-teal-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600 md:grid">
@@ -109,10 +110,21 @@ export function DocumentLibrary({ documents, folders, onOpen, onDelete, onRetry,
           <p className="text-sm font-semibold uppercase tracking-[0.14em] text-sea">Library</p>
           <h1 className="text-3xl font-semibold text-ink">Documents</h1>
         </div>
-        <p className="text-sm text-slate-600">{documents.length} documents in your workspace</p>
+        <p className="text-sm text-slate-600">{isLoading ? "Loading documents..." : `${documents.length} documents in your workspace`}</p>
       </div>
 
-      {documents.length === 0 ? (
+      {isLoading ? (
+        <div
+          role="status"
+          aria-label="Loading documents"
+          className="flex min-h-64 items-center justify-center rounded-lg border border-teal-100 bg-white shadow-panel"
+        >
+          <p className="inline-flex items-center gap-2 text-sm font-medium text-slate-600">
+            <Loader2 size={16} className="animate-spin text-sea" aria-hidden="true" />
+            Loading documents...
+          </p>
+        </div>
+      ) : documents.length === 0 ? (
         <div className="brand-soft-surface rounded-lg border border-dashed border-teal-200 p-8 text-center shadow-panel">
           <h2 className="text-xl font-semibold text-ink">No PDFs yet</h2>
           <p className="mt-2 text-sm text-slate-600">Upload a text-based PDF to start asking grounded questions.</p>

@@ -36,7 +36,8 @@ const supportedFlow = [
 
 const ACTIVITY_LABELS: Record<string, string> = {
   document_uploaded: "Document uploaded",
-  conversation_updated: "Conversation updated"
+  conversation_updated: "Conversation updated",
+  conversation_deleted: "Conversation deleted"
 };
 
 function activityTypeLabel(item: ActivityItem) {
@@ -99,7 +100,7 @@ export function DashboardPage({ api, onUploadFile, onOpenChat }: DashboardPagePr
 
         <section className="mx-auto w-full max-w-5xl rounded-2xl border border-teal-100 bg-white p-5 shadow-panel">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.86fr)]">
-            <UploadDropzone onAccepted={(file) => void handleAccepted(file)} initialProgress={72} />
+            <UploadDropzone onAccepted={handleAccepted} initialProgress={72} />
 
             <div className="brand-soft-surface flex min-h-[280px] flex-col rounded-xl border border-teal-100 p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sea">Supported flow</p>

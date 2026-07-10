@@ -1,5 +1,5 @@
-import { screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { ChatView } from "./ChatView";
 import { renderWithRouter } from "../../test/test-utils";
 import { ChatMessage, ChatSummary } from "../../types";
@@ -25,7 +25,7 @@ const messages: ChatMessage[] = [
   {
     id: "msg-2",
     role: "assistant",
-    content: "Contract A nets 30 days; the deck proposes 45.",
+    content: "Contract A nets 30 days (pp. 12-13); the deck proposes 45 (p. 3).",
     createdAt: "2026-06-12T15:15:00Z",
     sources: [
       {
@@ -59,18 +59,28 @@ describe("ChatView", () => {
     expect(screen.getByText("kickoff-deck.pptx")).toBeInTheDocument();
   });
 
-  it("links PDF citations to the document workspace with a page label", () => {
+  it("renames the conversation from the header", () => {
+    const onRenameChat = vi.fn();
+    renderWithRouter(<ChatView chat={chat} messages={messages} onRenameChat={onRenameChat} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /rename contract vs deck/i }));
+    const titleInput = screen.getByRole("textbox", { name: /conversation name/i });
+    fireEvent.change(titleInput, { target: { value: "Updated conversation" } });
+    fireEvent.click(screen.getByRole("button", { name: /save conversation name/i }));
+
+    expect(onRenameChat).toHaveBeenCalledWith("Updated conversation");
+  });
+  it("links compact citations to the document workspace with source labels", () => {
     renderWithRouter(<ChatView chat={chat} messages={messages} />);
 
-    const pdfCitation = screen.getByRole("link", { name: "contract-a.pdf · pp. 12-13" });
+    const pdfCitation = screen.getByRole("link", { name: /open source 1: contract-a\.pdf - pp\. 12-13/i });
     expect(pdfCitation).toHaveAttribute("href", "/app/documents/doc-1");
   });
 
-  it("renders non-PDF citations as plain slide labels", () => {
+  it("links converted document citations to their workspace", () => {
     renderWithRouter(<ChatView chat={chat} messages={messages} />);
 
-    const pptxCitation = screen.getByText("kickoff-deck.pptx · slide 3");
-    expect(pptxCitation).toBeInTheDocument();
-    expect(pptxCitation.closest("a")).toBeNull();
+    const pptxCitation = screen.getByRole("link", { name: /open source 2: kickoff-deck\.pptx - slide 3/i });
+    expect(pptxCitation).toHaveAttribute("href", "/app/documents/doc-2");
   });
 });

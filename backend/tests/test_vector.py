@@ -6,9 +6,13 @@ from app.models import Document, DocumentChunk, DocumentStatus, User
 from app.services.vector import (
     DOCUMENT_INTELLIGENCE_SYSTEM_PROMPT,
     MULTI_DOCUMENT_ATTRIBUTION_PROMPT,
+    PER_DOCUMENT_DETAIL_PROMPT,
+    SUMMARY_MAX_COMPLETION_TOKENS,
     RetrievedSource,
     VectorService,
     format_source_context,
+    multi_document_context_source_limit,
+    question_needs_per_document_answer,
     question_needs_short_summary,
 )
 
@@ -199,7 +203,7 @@ def test_stream_answer_tokens_caps_plain_document_summaries(monkeypatch):
 
     list(VectorService(Settings(openai_api_key="sk-test")).stream_answer_tokens("Summarize this document.", [source]))
 
-    assert calls[0]["max_completion_tokens"] == 320
+    assert calls[0]["max_completion_tokens"] == SUMMARY_MAX_COMPLETION_TOKENS
 
 
 def test_generate_document_insight_returns_structured_cache(monkeypatch):
@@ -284,6 +288,15 @@ def test_short_summary_detection_keeps_detailed_requests_uncapped():
     assert question_needs_short_summary("Summarize this document.") is True
     assert question_needs_short_summary("Give me a detailed summary of this document.") is False
     assert question_needs_short_summary("Summarize this selected passage.") is False
+
+
+def test_per_document_question_detection():
+    assert question_needs_per_document_answer("What is the teaching from each file?") is True
+    assert question_needs_per_document_answer("What is the summary from all the files?") is True
+    assert question_needs_per_document_answer("Compare every document.") is True
+    assert question_needs_per_document_answer("What is the teaching here?") is False
+    assert multi_document_context_source_limit(8) == 12
+    assert multi_document_context_source_limit(20) == 20
 
 
 def test_delete_document_vectors_uses_stored_vector_ids(db_session, monkeypatch):
@@ -427,7 +440,7 @@ def test_query_scope_filters_pinecone_with_document_id_in(db_session, monkeypatc
         "user_id": str(user.id),
         "document_id": {"$in": [str(document_a.id), str(document_b.id)]},
     }
-    assert query_calls[0]["top_k"] == 8
+    assert query_calls[0]["top_k"] == 16
     assert sources[0].document_id == str(document_a.id)
     assert sources[0].document_filename == "contract-a.pdf"
 
@@ -439,14 +452,14 @@ def test_query_scope_guarantees_a_source_from_each_matched_document(db_session, 
     db_session.add_all([user, document_a, document_b])
     db_session.commit()
     matches = [
-        _pinecone_match(str(document_a.id), f"chunk-a-{index}", 0.9 - index * 0.01) for index in range(8)
+        _pinecone_match(str(document_a.id), f"chunk-a-{index}", 0.9 - index * 0.01) for index in range(16)
     ] + [_pinecone_match(str(document_b.id), "chunk-b-0", 0.2)]
     _patch_fake_pinecone_and_openai(monkeypatch, matches, [])
     settings = Settings(_env_file=None, openai_api_key="sk-test", pinecone_api_key="pinecone-key")
 
     sources = VectorService(settings).query_scope(user, [document_a, document_b], "Compare the documents.")
 
-    assert len(sources) == 8
+    assert len(sources) == 12
     assert any(source.document_id == str(document_b.id) for source in sources)
 
 
@@ -512,6 +525,38 @@ def _recording_stream_openai(monkeypatch, calls: list):
             self.chat = FakeChat()
 
     monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+
+
+def test_stream_answer_tokens_adds_per_document_detail_prompt_for_each_file_questions(monkeypatch):
+    calls: list = []
+    _recording_stream_openai(monkeypatch, calls)
+    sources = [
+        RetrievedSource(
+            chunk_id="chunk-a",
+            page_start=1,
+            page_end=1,
+            excerpt="The first story teaches generosity.",
+            score=0.9,
+            document_id="doc-a",
+            document_filename="story-a.pdf",
+        ),
+        RetrievedSource(
+            chunk_id="chunk-b",
+            page_start=2,
+            page_end=2,
+            excerpt="The second story teaches patience.",
+            score=0.8,
+            document_id="doc-b",
+            document_filename="story-b.pdf",
+        ),
+    ]
+    service = VectorService(Settings(_env_file=None, openai_api_key="sk-test"))
+
+    list(service.stream_answer_tokens("What is the summary from all the files?", sources))
+
+    assert PER_DOCUMENT_DETAIL_PROMPT in calls[0]["messages"][0]["content"]
+    assert "do not apply the short-summary limit" in calls[0]["messages"][1]["content"]
+    assert "max_completion_tokens" not in calls[0]
 
 
 def test_stream_answer_tokens_adds_attribution_prompt_for_multi_document_sources(monkeypatch):

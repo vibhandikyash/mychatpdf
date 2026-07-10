@@ -370,6 +370,61 @@ def test_stream_uses_chat_model_override(db_session):
     assert vector_service.model == "o4-mini"
 
 
+def test_all_files_question_includes_overview_source_from_every_document(db_session):
+    user = _authenticated_user(db_session)
+    documents = [
+        _ready_document(user, "magi.pdf"),
+        _ready_document(user, "mandarin.pdf"),
+        _ready_document(user, "kahaniyan.pdf"),
+    ]
+    chunks = [
+        _chunk(user, documents[0], 0, 1, "The Gift of the Magi teaches sacrificial love and generosity.", "vec-0"),
+        _chunk(user, documents[1], 0, 1, "The Mandarin file teaches extensive reading for language learning.", "vec-1"),
+        _chunk(user, documents[2], 0, 1, "The Hindi story teaches unity and teamwork.", "vec-2"),
+    ]
+    db_session.add_all([*documents, *chunks])
+    db_session.commit()
+    chat = create_chat(db_session, user, documents)
+
+    class PartialVectorService:
+        def __init__(self):
+            self.sources: list[RetrievedSource] = []
+
+        def query_scope(self, _user, _documents, _question):
+            return [
+                RetrievedSource(
+                    chunk_id=str(chunks[1].id),
+                    page_start=chunks[1].page_start,
+                    page_end=chunks[1].page_end,
+                    excerpt=chunks[1].text_excerpt,
+                    score=0.95,
+                    document_id=str(documents[1].id),
+                    document_filename=documents[1].original_filename,
+                )
+            ]
+
+        def stream_answer_tokens(self, _question, sources):
+            self.sources = sources
+            yield "ok"
+
+    vector_service = PartialVectorService()
+
+    list(
+        stream_chat_response(
+            db_session,
+            user,
+            documents,
+            "What is the summary from all the files?",
+            vector_service,
+            chat=chat,
+        )
+    )
+
+    source_document_ids = {source.document_id for source in vector_service.sources}
+    assert source_document_ids == {str(document.id) for document in documents}
+    persisted_document_ids = {source.document_id for source in db_session.query(MessageSource).all()}
+    assert persisted_document_ids == {document.id for document in documents}
+
 def test_multi_doc_merge_keeps_vector_sources_when_keywords_saturate(db_session):
     user = _authenticated_user(db_session)
     documents = [_ready_document(user, f"contract-{index}.pdf") for index in range(3)]

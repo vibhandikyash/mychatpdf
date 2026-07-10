@@ -2,13 +2,18 @@
 chunking, embedding, citations, and page limits stay format-agnostic."""
 from collections.abc import Callable
 from io import BytesIO
+from typing import Protocol
 
 from app.models import Document
+from app.services.preview import PREVIEW_PDF_FORMATS
 from app.services.processing import ExtractedPage, NoExtractableTextError, UnsupportedFileError
 
-# ponytail: word-count "pages" for docx/txt/rtf; real pagination needs a renderer
-# and citations only need stable section numbers.
 SECTION_TARGET_WORDS = 800
+
+
+class PreviewConverter(Protocol):
+    def convert_to_pdf(self, data: bytes, document_format: str) -> bytes:
+        pass
 
 
 def _word_sections(text: str) -> list[ExtractedPage]:
@@ -144,8 +149,9 @@ EXTRACTORS: dict[str, Callable[[bytes], list[ExtractedPage]]] = {
 class DocumentTextExtractor:
     """Storage-backed extractor that picks the format extractor per document."""
 
-    def __init__(self, storage_service=None):
+    def __init__(self, storage_service=None, preview_converter: PreviewConverter | None = None):
         self.storage_service = storage_service
+        self.preview_converter = preview_converter
 
     def extract_pages(self, document: Document) -> list[ExtractedPage]:
         if self.storage_service is None:
@@ -156,14 +162,25 @@ class DocumentTextExtractor:
             return []
 
         document_format = document.format or "pdf"
-        extract = EXTRACTORS.get(document_format)
-        if extract is None:
-            raise UnsupportedFileError(f"No extractor is registered for format '{document_format}'.")
         try:
-            pages = extract(file_bytes)
+            pages = self._extract_pages(document, file_bytes, document_format)
         except NoExtractableTextError as error:
             if error.page_count is not None:
                 document.page_count = error.page_count
             raise
         document.page_count = len(pages)
         return pages
+
+    def _extract_pages(self, document: Document, file_bytes: bytes, document_format: str) -> list[ExtractedPage]:
+        if document_format in PREVIEW_PDF_FORMATS and self.preview_converter is not None:
+            preview_pdf = self.preview_converter.convert_to_pdf(file_bytes, document_format)
+            try:
+                self.storage_service.upload_preview_pdf(document, preview_pdf)
+            except Exception as error:
+                raise UnsupportedFileError("Document preview PDF could not be stored.") from error
+            return extract_pdf(preview_pdf)
+
+        extract = EXTRACTORS.get(document_format)
+        if extract is None:
+            raise UnsupportedFileError(f"No extractor is registered for format '{document_format}'.")
+        return extract(file_bytes)

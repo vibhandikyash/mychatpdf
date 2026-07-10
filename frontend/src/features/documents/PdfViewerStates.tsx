@@ -4,11 +4,11 @@ export function PdfOpeningNotice() {
   return (
     <div
       role="status"
-      aria-label="Opening PDF preview"
+      aria-label="Opening document preview"
       className="sticky top-0 z-10 mx-auto mb-4 flex max-w-sm items-center gap-3 rounded-md border border-slate-200 bg-white/95 px-4 py-3 text-sm font-medium text-slate-700 shadow-panel backdrop-blur"
     >
       <Loader2 size={16} className="shrink-0 animate-spin text-sea" aria-hidden="true" />
-      Opening PDF...
+      Opening preview...
     </div>
   );
 }
@@ -29,21 +29,21 @@ export function NativePdfPreview({
       {isLoading ? (
         <div
           role="status"
-          aria-label="Opening native PDF preview"
+          aria-label="Opening native document preview"
           className="absolute inset-x-4 top-4 z-10 mx-auto flex max-w-sm items-center gap-3 rounded-md border border-slate-200 bg-white/95 px-4 py-3 text-sm font-medium text-slate-700 shadow-panel backdrop-blur"
         >
           <Loader2 size={16} className="shrink-0 animate-spin text-sea" aria-hidden="true" />
-          Opening native PDF preview...
+          Opening native preview...
         </div>
       ) : null}
-      <iframe title={`PDF preview for ${documentName}`} src={previewUrl} onLoad={onLoad} className="h-full min-h-[520px] w-full border-0 bg-white" />
+      <iframe title={`Document preview for ${documentName}`} src={previewUrl} onLoad={onLoad} className="h-full min-h-[520px] w-full border-0 bg-white" />
     </div>
   );
 }
 
 export function PdfPreviewSkeleton() {
   return (
-    <div role="status" aria-label="Opening PDF preview" className="grid h-full min-h-[520px] place-items-center p-5">
+    <div role="status" aria-label="Opening document preview" className="grid h-full min-h-[520px] place-items-center p-5">
       <div className="w-full max-w-3xl rounded-md border border-slate-200 bg-white p-5 shadow-panel">
         <div className="space-y-3">
           <div className="h-4 w-2/3 animate-pulse rounded bg-slate-200" />
@@ -68,7 +68,7 @@ export function PdfLoadFailure({
   return (
     <div className="grid h-full min-h-[520px] place-items-center p-5">
       <div role="alert" className="w-full max-w-md rounded-md border border-amber-200 bg-white p-5 text-sm leading-6 text-slate-700 shadow-panel">
-        <p className="text-base font-semibold text-ink">We could not open this PDF in the smooth viewer.</p>
+        <p className="text-base font-semibold text-ink">We could not open this document in the smooth viewer.</p>
         <p className="mt-2 text-slate-600">
           Retry once if the file was still being prepared, or use the browser-native preview for this document.
         </p>
@@ -97,3 +97,4 @@ export function PdfLoadFailure({
     </div>
   );
 }
+

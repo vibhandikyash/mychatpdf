@@ -49,7 +49,7 @@ def dashboard(
     recent_chats = list(
         db.scalars(
             select(Chat)
-            .where(Chat.user_id == current_user.id)
+            .where(Chat.user_id == current_user.id, Chat.deleted_at.is_(None))
             .options(
                 selectinload(Chat.documents),
                 selectinload(Chat.folder).selectinload(Folder.documents),
@@ -67,8 +67,14 @@ def dashboard(
     ).all()
     activity_chats = db.execute(
         select(Chat.id, Chat.title, Chat.updated_at)
-        .where(Chat.user_id == current_user.id)
+        .where(Chat.user_id == current_user.id, Chat.deleted_at.is_(None))
         .order_by(Chat.updated_at.desc(), Chat.id.desc())
+        .limit(RECENT_ACTIVITY_LIMIT)
+    ).all()
+    deleted_chats = db.execute(
+        select(Chat.id, Chat.title, Chat.deleted_at)
+        .where(Chat.user_id == current_user.id, Chat.deleted_at.is_not(None))
+        .order_by(Chat.deleted_at.desc(), Chat.id.desc())
         .limit(RECENT_ACTIVITY_LIMIT)
     ).all()
     activity = [
@@ -87,6 +93,14 @@ def dashboard(
             "timestamp": updated_at,
         }
         for chat_id, title, updated_at in activity_chats
+    ] + [
+        {
+            "type": "conversation_deleted",
+            "id": str(chat_id),
+            "label": title or "Untitled conversation",
+            "timestamp": deleted_at,
+        }
+        for chat_id, title, deleted_at in deleted_chats
     ]
     activity.sort(key=lambda item: item["timestamp"], reverse=True)
     for item in activity:
