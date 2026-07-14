@@ -21,6 +21,7 @@ type AuthStep = "credentials" | "verify-email" | "verify-sign-in";
 const OAUTH_CALLBACK_PATH = "/sso-callback";
 const MIN_PASSWORD_LENGTH = 8;
 const GOOGLE_ACCOUNT_SELECTION_PROMPT = "select_account consent";
+const CLIENT_TRUST_STATUS = "needs_client_trust";
 
 export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; copy: AuthCopy; redirectPath: string }) {
   const authState = useAuth();
@@ -115,6 +116,19 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
             setNotice({ tone: "info", message: `We sent a verification code to ${trimmedEmail}.` });
             return;
           }
+        }
+
+        if (hasClientTrustStatus(result)) {
+          await signInState.signIn.prepareSecondFactor({
+            strategy: "email_code"
+          });
+          setVerificationCode("");
+          setStep("verify-sign-in");
+          setNotice({
+            tone: "info",
+            message: `New device detected. We sent a verification code to ${trimmedEmail}.`
+          });
+          return;
         }
 
         setNotice({
@@ -344,6 +358,10 @@ function SwitchPrompt({ prompt }: { prompt: string }) {
       {prompt.slice(prompt.indexOf(PRODUCT_NAME) + PRODUCT_NAME.length)}
     </>
   );
+}
+
+function hasClientTrustStatus(result: { status: string | null }) {
+  return result.status === CLIENT_TRUST_STATUS;
 }
 
 function getAuthErrorMessage(error: unknown) {

@@ -8,7 +8,10 @@ import { authCopy, type AuthMode } from "./authConfig";
 const clerkMocks = vi.hoisted(() => ({
   isSignedIn: false,
   signOut: vi.fn(async () => undefined),
+  signInAttemptSecondFactor: vi.fn(),
   signInCreate: vi.fn(),
+  signInPrepareSecondFactor: vi.fn(),
+  signInSetActive: vi.fn(async () => undefined),
   signUpCreate: vi.fn()
 }));
 
@@ -22,9 +25,11 @@ vi.mock("@clerk/clerk-react", () => ({
     isLoaded: true,
     signIn: {
       authenticateWithRedirect: vi.fn(),
-      create: clerkMocks.signInCreate
+      attemptSecondFactor: clerkMocks.signInAttemptSecondFactor,
+      create: clerkMocks.signInCreate,
+      prepareSecondFactor: clerkMocks.signInPrepareSecondFactor
     },
-    setActive: vi.fn()
+    setActive: clerkMocks.signInSetActive
   }),
   useSignUp: () => ({
     isLoaded: true,
@@ -42,11 +47,13 @@ describe("ClerkAuthFlow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clerkMocks.isSignedIn = false;
+    clerkMocks.signInAttemptSecondFactor.mockResolvedValue({ status: "complete", createdSessionId: "session_123" });
     clerkMocks.signInCreate.mockResolvedValue({
       firstFactorVerification: {
         externalVerificationRedirectURL: null
       }
     });
+    clerkMocks.signInPrepareSecondFactor.mockResolvedValue({ status: "needs_second_factor" });
     clerkMocks.signUpCreate.mockResolvedValue({
       verifications: {
         externalAccount: {
@@ -95,6 +102,26 @@ describe("ClerkAuthFlow", () => {
     expect(clerkMocks.signOut.mock.invocationCallOrder[0]).toBeLessThan(
       clerkMocks.signInCreate.mock.invocationCallOrder[0]
     );
+  });
+
+
+  it("starts client trust device verification with an email code", async () => {
+    clerkMocks.signInCreate.mockResolvedValue({ status: "needs_client_trust" });
+
+    renderAuthFlow("sign-in");
+
+    await userEvent.type(screen.getByPlaceholderText("Enter your email address"), "new-device@example.com");
+    await userEvent.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => {
+      expect(clerkMocks.signInPrepareSecondFactor).toHaveBeenCalledWith({ strategy: "email_code" });
+    });
+
+    expect(
+      screen.getByText("New device detected. We sent a verification code to new-device@example.com.")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /verify code/i })).toBeInTheDocument();
   });
 
   it("starts Google sign up with account selection", async () => {

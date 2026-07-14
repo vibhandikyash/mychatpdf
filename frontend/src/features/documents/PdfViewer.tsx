@@ -96,7 +96,6 @@ export function PdfViewer({
       setViewerMode("pdfjs");
       return;
     }
-
     let cancelled = false;
     let retryTimer: number | undefined;
     const loadingTask = pdfjs.getDocument({
@@ -168,7 +167,8 @@ export function PdfViewer({
     if (!pdfDocument || viewerMode !== "pdfjs" || !document.signedPdfUrl || fitZoomDocumentUrl === document.signedPdfUrl) {
       return;
     }
-
+    const loadedPdfDocument = pdfDocument;
+    const signedPdfUrl = document.signedPdfUrl;
     let cancelled = false;
 
     async function fitInitialZoomToPane() {
@@ -178,7 +178,7 @@ export function PdfViewer({
       }
 
       try {
-        const firstPage = await pdfDocument.getPage(1);
+        const firstPage = await loadedPdfDocument.getPage(1);
         if (cancelled) {
           return;
         }
@@ -191,13 +191,13 @@ export function PdfViewer({
           INITIAL_FIT_MAX_ZOOM
         );
 
-        setFitZoomDocumentUrl(document.signedPdfUrl);
+        setFitZoomDocumentUrl(signedPdfUrl);
         if (Math.abs(fittedZoom - zoom) > 1) {
           prepareForScaleChange();
           onZoomChange(fittedZoom);
         }
       } catch {
-        setFitZoomDocumentUrl(document.signedPdfUrl);
+        setFitZoomDocumentUrl(signedPdfUrl);
       }
     }
 
