@@ -507,7 +507,7 @@ def stream_chat_response(
     # mid-stream error, and it runs before the OpenAI call.
     # Re-validate against the current plan so a user who downgraded cannot
     # keep streaming with a premium model. Tiers ("fast"/"quality") are gated
-    # on the resolved OpenAI model.
+    # on the resolved OpenAI model
     plan = get_active_plan(db, user)
     check_scope_size(plan, [document.id for document in scope])
     answer_model = settings.resolve_chat_model(model if model is not None else chat.model)

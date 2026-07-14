@@ -16,6 +16,7 @@ export class ApiError extends Error {
 
 export type LimitKind = "ai_message" | "upload" | "storage" | "document_scope" | "chat_model" | "folder_chat";
 
+
 export class LimitExceededError extends ApiError {
   constructor(
     public readonly kind: LimitKind,

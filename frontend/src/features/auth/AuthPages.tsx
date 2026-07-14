@@ -1,6 +1,7 @@
+import { useAuth } from "@clerk/clerk-react";
 import { CheckCircle2, FileSearch, LockKeyhole, MessageSquareText, ShieldCheck, Sparkles } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import { ClerkAuthFlow } from "./AuthFlow";
 import { AuthUnavailable } from "./AuthFormPrimitives";
 import { DEFAULT_REDIRECT_PATH, authCopy, type AuthMode } from "./authConfig";
@@ -20,9 +21,14 @@ interface RouteState {
 
 export function AuthPage({ mode }: AuthPageProps) {
   const hasClerkKey = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
+  const { isLoaded, isSignedIn } = useAuth();
   const location = useLocation();
   const redirectPath = useMemo(() => getSafeRedirectPath(location.state), [location.state]);
   const copy = authCopy[mode];
+
+  if (hasClerkKey && isLoaded && isSignedIn) {
+    return <Navigate to={redirectPath} replace />;
+  }
 
   return (
     <main className="auth-page min-h-screen bg-[linear-gradient(135deg,#f8fbfc_0%,#eef4ff_46%,#f4efff_100%)] px-4 py-5 text-ink sm:px-6 lg:px-10">

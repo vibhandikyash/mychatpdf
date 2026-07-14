@@ -130,7 +130,6 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
           });
           return;
         }
-
         setNotice({
           tone: "error",
           message: "This account needs an additional verification step before it can open the workspace."
