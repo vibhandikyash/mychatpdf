@@ -14,6 +14,19 @@ export class ApiError extends Error {
   }
 }
 
+export type LimitKind = "ai_message" | "upload" | "storage" | "document_scope" | "chat_model" | "folder_chat";
+
+export class LimitExceededError extends ApiError {
+  constructor(
+    public readonly kind: LimitKind,
+    public readonly limit: number,
+    public readonly used: number
+  ) {
+    super("Plan limit exceeded", 402);
+    this.name = "LimitExceededError";
+  }
+}
+
 export class ApiClient {
   private readonly baseUrl: string;
   private readonly getToken?: () => Promise<string | null>;
@@ -76,7 +89,18 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      throw new ApiError(response.statusText || "Request failed", response.status);
+      const body = (await response.json().catch(() => null)) as {
+        code?: string;
+        kind?: LimitKind;
+        limit?: number;
+        used?: number;
+        detail?: unknown;
+      } | null;
+      if (response.status === 402 && body?.code === "limit_exceeded" && body.kind) {
+        throw new LimitExceededError(body.kind, body.limit ?? 0, body.used ?? 0);
+      }
+      const detail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : null;
+      throw new ApiError(detail ?? (response.statusText || "Request failed"), response.status);
     }
 
     return response;

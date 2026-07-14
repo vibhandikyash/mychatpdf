@@ -1,4 +1,4 @@
-import { useSignIn, useSignUp } from "@clerk/clerk-react";
+import { useAuth, useSignIn, useSignUp } from "@clerk/clerk-react";
 import { isClerkAPIResponseError } from "@clerk/clerk-react/errors";
 import { Eye, EyeOff } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
@@ -16,12 +16,15 @@ import {
 import { type AuthCopy, type AuthMode } from "./authConfig";
 import { BrandName, PRODUCT_NAME } from "../brand/Brand";
 
-type AuthStep = "credentials" | "verify-email";
+type AuthStep = "credentials" | "verify-email" | "verify-sign-in";
 
 const OAUTH_CALLBACK_PATH = "/sso-callback";
 const MIN_PASSWORD_LENGTH = 8;
+const GOOGLE_ACCOUNT_SELECTION_PROMPT = "select_account consent";
+const CLIENT_TRUST_STATUS = "needs_client_trust";
 
 export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; copy: AuthCopy; redirectPath: string }) {
+  const authState = useAuth();
   const signInState = useSignIn();
   const signUpState = useSignUp();
   const emailId = useId();
@@ -36,7 +39,7 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
   const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
-  const isLoaded = signInState.isLoaded && signUpState.isLoaded;
+  const isLoaded = authState.isLoaded && signInState.isLoaded && signUpState.isLoaded;
   const isBusy = isSubmitting || isGoogleSubmitting || !isLoaded;
   const trimmedEmail = email.trim();
 
@@ -49,17 +52,27 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
     setIsGoogleSubmitting(true);
 
     try {
+      if (authState.isSignedIn) {
+        await authState.signOut();
+      }
+
       const redirectParams = {
         strategy: "oauth_google" as const,
-        redirectUrl: OAUTH_CALLBACK_PATH,
-        redirectUrlComplete: redirectPath
+        redirectUrl: toCurrentOriginUrl(OAUTH_CALLBACK_PATH),
+        actionCompleteRedirectUrl: toCurrentOriginUrl(redirectPath),
+        oidcPrompt: GOOGLE_ACCOUNT_SELECTION_PROMPT
       };
 
-      if (mode === "sign-in") {
-        await signInState.signIn.authenticateWithRedirect({ ...redirectParams, continueSignIn: true });
-      } else {
-        await signUpState.signUp.authenticateWithRedirect({ ...redirectParams, continueSignUp: true });
+      const externalRedirectUrl =
+        mode === "sign-in"
+          ? (await signInState.signIn.create(redirectParams)).firstFactorVerification.externalVerificationRedirectURL
+          : (await signUpState.signUp.create(redirectParams)).verifications.externalAccount.externalVerificationRedirectURL;
+
+      if (!externalRedirectUrl) {
+        throw new Error("Google sign-in could not be started. Please try again.");
       }
+
+      window.location.assign(withGoogleAccountSelection(externalRedirectUrl));
     } catch (error) {
       setNotice({ tone: "error", message: getAuthErrorMessage(error) });
       setIsGoogleSubmitting(false);
@@ -86,6 +99,35 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
 
         if (result.status === "complete" && result.createdSessionId) {
           await signInState.setActive({ session: result.createdSessionId, redirectUrl: redirectPath });
+          return;
+        }
+
+        if (result.status === "needs_second_factor") {
+          const emailCodeFactor = result.supportedSecondFactors?.find(
+            (factor) => factor.strategy === "email_code"
+          );
+          if (emailCodeFactor) {
+            await signInState.signIn.prepareSecondFactor({
+              strategy: "email_code",
+              emailAddressId: emailCodeFactor.emailAddressId
+            });
+            setVerificationCode("");
+            setStep("verify-sign-in");
+            setNotice({ tone: "info", message: `We sent a verification code to ${trimmedEmail}.` });
+            return;
+          }
+        }
+
+        if (hasClientTrustStatus(result)) {
+          await signInState.signIn.prepareSecondFactor({
+            strategy: "email_code"
+          });
+          setVerificationCode("");
+          setStep("verify-sign-in");
+          setNotice({
+            tone: "info",
+            message: `New device detected. We sent a verification code to ${trimmedEmail}.`
+          });
           return;
         }
 
@@ -119,7 +161,7 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
   const handleVerificationSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!signUpState.isLoaded || !verificationCode.trim()) {
+    if (!isLoaded || !verificationCode.trim()) {
       return;
     }
 
@@ -127,10 +169,14 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
     setIsSubmitting(true);
 
     try {
-      const result = await signUpState.signUp.attemptEmailAddressVerification({ code: verificationCode.trim() });
+      const result =
+        step === "verify-sign-in"
+          ? await signInState.signIn.attemptSecondFactor({ strategy: "email_code", code: verificationCode.trim() })
+          : await signUpState.signUp.attemptEmailAddressVerification({ code: verificationCode.trim() });
 
       if (result.status === "complete" && result.createdSessionId) {
-        await signUpState.setActive({ session: result.createdSessionId, redirectUrl: redirectPath });
+        const setActive = step === "verify-sign-in" ? signInState.setActive : signUpState.setActive;
+        await setActive({ session: result.createdSessionId, redirectUrl: redirectPath });
         return;
       }
 
@@ -143,7 +189,7 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
   };
 
   const handleResendCode = async () => {
-    if (!signUpState.isLoaded) {
+    if (!isLoaded) {
       return;
     }
 
@@ -151,7 +197,11 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
     setIsSubmitting(true);
 
     try {
-      await signUpState.signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+      if (step === "verify-sign-in") {
+        await signInState.signIn.prepareSecondFactor({ strategy: "email_code" });
+      } else {
+        await signUpState.signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+      }
       setNotice({ tone: "info", message: `A new code was sent to ${trimmedEmail}.` });
     } catch (error) {
       setNotice({ tone: "error", message: getAuthErrorMessage(error) });
@@ -160,7 +210,7 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
     }
   };
 
-  if (step === "verify-email") {
+  if (step === "verify-email" || step === "verify-sign-in") {
     return (
       <form className="space-y-5" onSubmit={handleVerificationSubmit}>
         <Notice tone={notice?.tone ?? "info"} message={notice?.message ?? `Enter the code sent to ${trimmedEmail}.`} />
@@ -180,7 +230,11 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
         </Field>
 
         <button type="submit" className={primaryButtonClassName} disabled={isBusy}>
-          <ButtonContent loading={isSubmitting} loadingLabel="Verifying" label="Verify email" />
+          <ButtonContent
+            loading={isSubmitting}
+            loadingLabel="Verifying"
+            label={step === "verify-sign-in" ? "Verify code" : "Verify email"}
+          />
         </button>
 
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
@@ -276,6 +330,22 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
   );
 }
 
+function toCurrentOriginUrl(path: string) {
+  if (typeof window === "undefined") {
+    return path;
+  }
+
+  return new URL(path, window.location.origin).toString();
+}
+
+export function withGoogleAccountSelection(redirectUrl: URL) {
+  const url = new URL(redirectUrl.toString());
+  url.searchParams.set("prompt", GOOGLE_ACCOUNT_SELECTION_PROMPT);
+  url.searchParams.delete("authuser");
+  url.searchParams.delete("login_hint");
+  return url.toString();
+}
+
 function SwitchPrompt({ prompt }: { prompt: string }) {
   if (!prompt.includes(PRODUCT_NAME)) {
     return <>{prompt}</>;
@@ -288,6 +358,10 @@ function SwitchPrompt({ prompt }: { prompt: string }) {
       {prompt.slice(prompt.indexOf(PRODUCT_NAME) + PRODUCT_NAME.length)}
     </>
   );
+}
+
+function hasClientTrustStatus(result: { status: string | null }) {
+  return result.status === CLIENT_TRUST_STATUS;
 }
 
 function getAuthErrorMessage(error: unknown) {

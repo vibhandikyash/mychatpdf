@@ -32,3 +32,6 @@ uploads/
 *.db
 *.log
 manual-testing/review-screenshots/
+branch_structure.json
+frontend/public/e2e-fixture.pdf
+frontend/public/api/

@@ -1,18 +1,36 @@
 import { screen, waitFor } from "@testing-library/react";
 import { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { render } from "@testing-library/react";
 import { App } from "./App";
 
+const authMocks = vi.hoisted(() => ({
+  isSignedIn: true,
+  signOut: vi.fn(async () => undefined)
+}));
+
 vi.mock("@clerk/clerk-react", () => ({
-  AuthenticateWithRedirectCallback: () => <div>Completing sign in</div>,
+  AuthenticateWithRedirectCallback: (props: Record<string, string>) => (
+    <div
+      data-testid="sso-callback"
+      data-sign-in-url={props.signInUrl}
+      data-sign-up-url={props.signUpUrl}
+      data-sign-in-fallback-url={props.signInFallbackRedirectUrl}
+    >
+      Completing sign in
+    </div>
+  ),
   ClerkProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
-  UserButton: () => <button type="button">Account</button>,
+  UserButton: Object.assign(({ children }: { children?: ReactNode }) => <button type="button">Account{children}</button>, {
+    MenuItems: ({ children }: { children?: ReactNode }) => <>{children}</>,
+    Action: () => null
+  }),
   useAuth: () => ({
     isLoaded: true,
-    isSignedIn: true,
-    getToken: async () => "test-token"
+    isSignedIn: authMocks.isSignedIn,
+    getToken: async () => "test-token",
+    signOut: authMocks.signOut
   }),
   useSignIn: () => ({
     isLoaded: true,
@@ -35,7 +53,43 @@ vi.mock("@clerk/clerk-react", () => ({
 }));
 
 describe("App auth routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authMocks.isSignedIn = true;
+  });
+
+  it("passes app URLs to the OAuth callback route", () => {
+    render(
+      <MemoryRouter initialEntries={["/sso-callback"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByTestId("sso-callback")).toHaveAttribute(
+      "data-sign-in-url",
+      `${window.location.origin}/sign-in`
+    );
+    expect(screen.getByTestId("sso-callback")).toHaveAttribute(
+      "data-sign-up-url",
+      `${window.location.origin}/sign-up`
+    );
+    expect(screen.getByTestId("sso-callback")).toHaveAttribute("data-sign-in-fallback-url", "/app");
+  });
+
+  it("clears an existing Clerk session before rendering sign in", async () => {
+    render(
+      <MemoryRouter initialEntries={["/sign-in"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole("status", { name: /preparing sign in/i })).toBeInTheDocument();
+    await waitFor(() => expect(authMocks.signOut).toHaveBeenCalledTimes(1));
+  });
+
   it("renders the sign-up shell on Clerk verification subroutes", () => {
+    authMocks.isSignedIn = false;
+
     render(
       <MemoryRouter initialEntries={["/sign-up/verify-email-address"]}>
         <App />
@@ -48,6 +102,11 @@ describe("App auth routes", () => {
 });
 
 describe("App shell", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authMocks.isSignedIn = true;
+  });
+
   it("loads real recent documents into the sidebar", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () =>

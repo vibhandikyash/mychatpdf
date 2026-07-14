@@ -29,8 +29,15 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         index=True,
     )
+    folder_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("folders.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     original_filename: Mapped[str] = mapped_column(String(512))
     content_type: Mapped[str] = mapped_column(String(255))
+    format: Mapped[str] = mapped_column(String(16), default="pdf", server_default="pdf")
     file_size_bytes: Mapped[int] = mapped_column(Integer)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[DocumentStatus] = mapped_column(String(32), index=True)
@@ -46,6 +53,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="documents")
+    folder: Mapped["Folder | None"] = relationship(back_populates="documents")
     chunks: Mapped[list["DocumentChunk"]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",
@@ -57,6 +65,10 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         order_by="ProcessingJob.created_at",
     )
     chats: Mapped[list["Chat"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
+    chat_links: Mapped[list["ChatDocument"]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",
     )
