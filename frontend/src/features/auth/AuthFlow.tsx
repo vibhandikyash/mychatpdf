@@ -1,4 +1,4 @@
-import { useSignIn, useSignUp } from "@clerk/clerk-react";
+import { useAuth, useSignIn, useSignUp } from "@clerk/clerk-react";
 import { isClerkAPIResponseError } from "@clerk/clerk-react/errors";
 import { Eye, EyeOff } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
@@ -20,8 +20,10 @@ type AuthStep = "credentials" | "verify-email" | "verify-sign-in";
 
 const OAUTH_CALLBACK_PATH = "/sso-callback";
 const MIN_PASSWORD_LENGTH = 8;
+const GOOGLE_ACCOUNT_SELECTION_PROMPT = "select_account consent";
 
 export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; copy: AuthCopy; redirectPath: string }) {
+  const authState = useAuth();
   const signInState = useSignIn();
   const signUpState = useSignUp();
   const emailId = useId();
@@ -36,7 +38,7 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
   const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
-  const isLoaded = signInState.isLoaded && signUpState.isLoaded;
+  const isLoaded = authState.isLoaded && signInState.isLoaded && signUpState.isLoaded;
   const isBusy = isSubmitting || isGoogleSubmitting || !isLoaded;
   const trimmedEmail = email.trim();
 
@@ -49,17 +51,27 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
     setIsGoogleSubmitting(true);
 
     try {
+      if (authState.isSignedIn) {
+        await authState.signOut();
+      }
+
       const redirectParams = {
         strategy: "oauth_google" as const,
-        redirectUrl: OAUTH_CALLBACK_PATH,
-        redirectUrlComplete: redirectPath
+        redirectUrl: toCurrentOriginUrl(OAUTH_CALLBACK_PATH),
+        actionCompleteRedirectUrl: toCurrentOriginUrl(redirectPath),
+        oidcPrompt: GOOGLE_ACCOUNT_SELECTION_PROMPT
       };
 
-      if (mode === "sign-in") {
-        await signInState.signIn.authenticateWithRedirect({ ...redirectParams, continueSignIn: true });
-      } else {
-        await signUpState.signUp.authenticateWithRedirect({ ...redirectParams, continueSignUp: true });
+      const externalRedirectUrl =
+        mode === "sign-in"
+          ? (await signInState.signIn.create(redirectParams)).firstFactorVerification.externalVerificationRedirectURL
+          : (await signUpState.signUp.create(redirectParams)).verifications.externalAccount.externalVerificationRedirectURL;
+
+      if (!externalRedirectUrl) {
+        throw new Error("Google sign-in could not be started. Please try again.");
       }
+
+      window.location.assign(withGoogleAccountSelection(externalRedirectUrl));
     } catch (error) {
       setNotice({ tone: "error", message: getAuthErrorMessage(error) });
       setIsGoogleSubmitting(false);
@@ -302,6 +314,22 @@ export function ClerkAuthFlow({ mode, copy, redirectPath }: { mode: AuthMode; co
       </p>
     </div>
   );
+}
+
+function toCurrentOriginUrl(path: string) {
+  if (typeof window === "undefined") {
+    return path;
+  }
+
+  return new URL(path, window.location.origin).toString();
+}
+
+export function withGoogleAccountSelection(redirectUrl: URL) {
+  const url = new URL(redirectUrl.toString());
+  url.searchParams.set("prompt", GOOGLE_ACCOUNT_SELECTION_PROMPT);
+  url.searchParams.delete("authuser");
+  url.searchParams.delete("login_hint");
+  return url.toString();
 }
 
 function SwitchPrompt({ prompt }: { prompt: string }) {

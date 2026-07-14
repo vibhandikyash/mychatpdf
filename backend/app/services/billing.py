@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 # Single source of truth for the plan matrix: migration 0005 and the test
 # fixtures both seed from this. stripe_price_id stays NULL in the DB; price ids
 # are resolved from env at runtime (price_id_for_plan / plan_id_for_price).
+FREE_PLAN_DOCUMENT_SCOPE_LIMIT = 1
+
 PLAN_SEEDS: list[dict[str, object]] = [
     {
         "id": "free",
@@ -23,7 +25,7 @@ PLAN_SEEDS: list[dict[str, object]] = [
         "limit_ai_messages": 25,
         "limit_uploads": 3,
         "limit_storage_mb": 50,
-        "limit_document_scope": 2,
+        "limit_document_scope": FREE_PLAN_DOCUMENT_SCOPE_LIMIT,
         "allowed_chat_models": ["gpt-4.1-mini"],
         "is_active": True,
     },

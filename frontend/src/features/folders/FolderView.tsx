@@ -16,6 +16,7 @@ interface FolderViewProps {
   onOpenChat: (chatId: string) => void;
   onDeleted: () => void;
   onUploadFile: (file: File) => Promise<void>;
+  folderChatAvailable?: boolean;
   onFoldersChanged?: () => void;
 }
 
@@ -26,6 +27,7 @@ export function FolderView({
   onOpenChat,
   onDeleted,
   onUploadFile,
+  folderChatAvailable,
   onFoldersChanged
 }: FolderViewProps) {
   const [folders, setFolders] = useState<FolderSummary[]>([]);
@@ -138,6 +140,10 @@ export function FolderView({
   }
 
   async function handleStartChat() {
+    if (folderChatAvailable === false) {
+      setError(new LimitExceededError("folder_chat", 0, 0));
+      return;
+    }
     if (!api || isStartingChat) {
       return;
     }
@@ -174,6 +180,7 @@ export function FolderView({
   }
 
   const folderName = folder?.name ?? "Folder";
+  const folderChatUpgradeError = folderChatAvailable === false ? new LimitExceededError("folder_chat", 0, 0) : null;
 
   return (
     <section className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
@@ -202,7 +209,7 @@ export function FolderView({
           <button
             type="button"
             onClick={() => void handleStartChat()}
-            disabled={isStartingChat}
+            disabled={isStartingChat || folderChatAvailable === false}
             className="brand-gradient inline-flex min-h-11 items-center gap-2 rounded-md px-4 text-sm font-semibold text-white shadow-sm hover:shadow-[0_12px_24px_rgba(32,104,248,0.22)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isStartingChat ? (
@@ -263,6 +270,12 @@ export function FolderView({
       {error ? (
         <div role="alert" className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {typeof error === "string" ? error : <LimitExceededNotice error={error} />}
+        </div>
+      ) : null}
+
+      {folderChatUpgradeError ? (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          <LimitExceededNotice error={folderChatUpgradeError} />
         </div>
       ) : null}
 

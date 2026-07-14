@@ -284,7 +284,7 @@ def test_scope_over_free_limit_returns_402_on_chat_create(authenticated_client, 
     )
 
     assert response.status_code == 402
-    assert response.json() == {"code": "limit_exceeded", "kind": "document_scope", "limit": 2, "used": 3}
+    assert response.json() == {"code": "limit_exceeded", "kind": "document_scope", "limit": 1, "used": 3}
 
 
 def test_quality_tier_rejected_on_free_plan_at_creation(authenticated_client, db_session):

@@ -8,7 +8,7 @@ from app.api.deps import get_current_user
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.models import Plan, User
-from app.services.billing import get_active_subscription, get_billing_service, subscription_summary
+from app.services.billing import FREE_PLAN_DOCUMENT_SCOPE_LIMIT, FREE_PLAN_ID, get_active_subscription, get_billing_service, subscription_summary
 from app.services.usage import usage_summary
 
 router = APIRouter()
@@ -25,7 +25,7 @@ def _plan_payload(plan: Plan) -> dict[str, object]:
         "limit_ai_messages": plan.limit_ai_messages,
         "limit_uploads": plan.limit_uploads,
         "limit_storage_mb": plan.limit_storage_mb,
-        "limit_document_scope": plan.limit_document_scope,
+        "limit_document_scope": FREE_PLAN_DOCUMENT_SCOPE_LIMIT if plan.id == FREE_PLAN_ID else plan.limit_document_scope,
         "allowed_chat_models": plan.allowed_chat_models,
     }
 

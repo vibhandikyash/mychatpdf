@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Document, Plan, UsagePeriod, User
 from app.models.mixins import utc_now
-from app.services.billing import get_active_plan, get_active_subscription
+from app.services.billing import FREE_PLAN_DOCUMENT_SCOPE_LIMIT, FREE_PLAN_ID, get_active_plan, get_active_subscription
 
 BYTES_PER_MB = 1024 * 1024
 
@@ -121,11 +121,17 @@ def check_storage(db: Session, user: User, incoming_bytes: int) -> None:
 
 
 def check_scope_size(plan: Plan, document_ids: list[UUID]) -> None:
-    if len(document_ids) > plan.limit_document_scope:
+    limit = FREE_PLAN_DOCUMENT_SCOPE_LIMIT if plan.id == FREE_PLAN_ID else plan.limit_document_scope
+    if len(document_ids) > limit:
         raise LimitExceeded(
-            "document_scope", limit=plan.limit_document_scope, used=len(document_ids)
+            "document_scope", limit=limit, used=len(document_ids)
         )
 
+
+
+def require_premium_plan(plan: Plan, kind: str) -> None:
+    if plan.id == FREE_PLAN_ID:
+        raise LimitExceeded(kind)
 
 def check_model_allowed(plan: Plan, model: str | None) -> None:
     if model is None or plan.allowed_chat_models is None:

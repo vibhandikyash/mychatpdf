@@ -14,7 +14,7 @@ from app.models import Chat, Document, DocumentStatus, Folder, Message, MessageS
 from app.models.mixins import utc_now
 from app.services.billing import get_active_plan
 from app.services.chat import create_chat, folder_scope, stream_chat_response
-from app.services.usage import check_model_allowed, check_scope_size
+from app.services.usage import check_model_allowed, check_scope_size, require_premium_plan
 from app.services.vector import get_vector_service
 
 router = APIRouter()
@@ -144,6 +144,7 @@ def create_chat_route(
     check_model_allowed(plan, settings.resolve_chat_model(model))
 
     if raw_folder_id is not None:
+        require_premium_plan(plan, "folder_chat")
         try:
             folder_uuid = UUID(str(raw_folder_id))
         except ValueError as exc:
@@ -248,6 +249,7 @@ def stream_chat_message(
         raise HTTPException(status_code=422, detail="Message content is required")
     model = validated_model(payload, settings)
     if chat.folder_id is not None:
+        require_premium_plan(get_active_plan(db, current_user), "folder_chat")
         # Folder chats resolve scope at message time from the folder's current
         # READY documents; the plan's scope limit is re-checked here because
         # the folder may have grown since the chat was created.

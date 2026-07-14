@@ -1,10 +1,16 @@
 "use client";
 
+import Script from "next/script";
 import { useState } from "react";
 import Reveal from "@/components/motion/reveal";
 import { CheckIcon } from "@/components/icons";
 
 type Status = "idle" | "sending" | "sent" | "error";
+
+const TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA";
+const turnstileSiteKey =
+  process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ??
+  (process.env.NODE_ENV === "production" ? undefined : TURNSTILE_TEST_SITE_KEY);
 
 export default function ContactForm() {
   const [status, setStatus] = useState<Status>("idle");
@@ -89,6 +95,17 @@ export default function ContactForm() {
           placeholder="How can we help?"
         />
       </div>
+      {turnstileSiteKey ? (
+        <>
+          <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js" strategy="afterInteractive" />
+          <div
+            className="cf-turnstile"
+            data-sitekey={turnstileSiteKey}
+            data-action="contact"
+            data-theme="light"
+          />
+        </>
+      ) : null}
       {error && (
         <p className="text-sm text-red-600" role="alert">
           {error}

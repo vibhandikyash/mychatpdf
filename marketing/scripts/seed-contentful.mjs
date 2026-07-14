@@ -942,7 +942,7 @@ await upsertEntry("siteSettings", "siteSettings", {
   siteName: "MyPDFChat",
   tagline: "Chat with your documents. Verify every answer.",
   companyName: "MyPDFChat Inc.",
-  contactEmail: "hello@mychatpdf.example",
+  contactEmail: "contact@mypdfchat.com",
   contactPhone: "+1 (555) 010-4242",
   address: "600 Congress Ave, Suite 1400, Austin, TX 78701",
   navItems: [

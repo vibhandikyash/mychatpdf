@@ -118,6 +118,7 @@ def test_plans_endpoint_is_public_and_returns_seeded_plans(client):
     assert set(items) == {seed["id"] for seed in PLAN_SEEDS}
     assert items["free"]["limit_ai_messages"] == 25
     assert items["free"]["allowed_chat_models"] == ["gpt-4.1-mini"]
+    assert items["free"]["limit_document_scope"] == 1
     assert items["pro_monthly"]["interval"] == "month"
     assert items["pro_monthly"]["limit_storage_mb"] == 2048
     assert items["pro_yearly"]["allowed_chat_models"] is None

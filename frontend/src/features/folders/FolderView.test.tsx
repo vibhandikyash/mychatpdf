@@ -141,6 +141,13 @@ describe("FolderView", () => {
     expect(createRequest?.body).toBe(JSON.stringify({ folder_id: folderId }));
   });
 
+
+  it("shows the premium notice when folder chat is unavailable", async () => {
+    renderFolderView([], { folderChatAvailable: false });
+
+    expect(await screen.findByText(/folder chat is available on the pro plan/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /chat with folder/i })).toBeDisabled();
+  });
   it("shows the delete confirmation wording", async () => {
     const user = userEvent.setup();
     renderFolderView([]);

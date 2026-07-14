@@ -8,6 +8,7 @@ from app.models import (
     DocumentStatus,
     Folder,
     Message,
+    Subscription,
     MessageRole,
     MessageStatus,
     User,
@@ -122,7 +123,15 @@ def test_rename_folder_updates_name(authenticated_client, db_session):
 
 
 def test_folder_ownership_denial_returns_404(authenticated_client, db_session):
-    _authenticated_user(db_session)
+    user = _authenticated_user(db_session)
+    db_session.add(
+        Subscription(
+            user_id=user.id,
+            plan_id="pro_monthly",
+            stripe_subscription_id="sub_folder_unowned",
+            status="active",
+        )
+    )
     owner = User(clerk_user_id="owner", email="owner@example.com")
     db_session.add(owner)
     db_session.commit()
@@ -153,7 +162,15 @@ def test_upload_with_folder_id_lands_in_folder(authenticated_client, db_session)
 
 
 def test_upload_with_invalid_folder_returns_422(authenticated_client, db_session):
-    _authenticated_user(db_session)
+    user = _authenticated_user(db_session)
+    db_session.add(
+        Subscription(
+            user_id=user.id,
+            plan_id="pro_monthly",
+            stripe_subscription_id="sub_folder_unowned",
+            status="active",
+        )
+    )
     owner = User(clerk_user_id="owner", email="owner@example.com")
     db_session.add(owner)
     db_session.commit()
@@ -242,7 +259,16 @@ def test_create_folder_chat_stores_folder_without_chat_documents(authenticated_c
     ready = _ready_document(user, "ready.pdf", folder=folder)
     pending = _ready_document(user, "pending.pdf", folder=folder)
     pending.status = DocumentStatus.UPLOADED
-    db_session.add_all([ready, pending])
+    db_session.add_all([
+        ready,
+        pending,
+        Subscription(
+            user_id=user.id,
+            plan_id="pro_monthly",
+            stripe_subscription_id="sub_folder_create",
+            status="active",
+        ),
+    ])
     db_session.commit()
 
     response = authenticated_client.post("/api/chats", json={"folder_id": str(folder.id)})
@@ -272,8 +298,27 @@ def test_create_chat_requires_exactly_one_of_folder_or_documents(authenticated_c
     assert both.status_code == 422
 
 
+def test_create_folder_chat_requires_premium_plan(authenticated_client, db_session):
+    user = _authenticated_user(db_session)
+    folder = _folder(db_session, user)
+    db_session.add(_ready_document(user, "ready.pdf", folder=folder))
+    db_session.commit()
+
+    response = authenticated_client.post("/api/chats", json={"folder_id": str(folder.id)})
+
+    assert response.status_code == 402
+    assert response.json()["kind"] == "folder_chat"
+
 def test_create_chat_rejects_unowned_folder(authenticated_client, db_session):
-    _authenticated_user(db_session)
+    user = _authenticated_user(db_session)
+    db_session.add(
+        Subscription(
+            user_id=user.id,
+            plan_id="pro_monthly",
+            stripe_subscription_id="sub_folder_unowned",
+            status="active",
+        )
+    )
     owner = User(clerk_user_id="owner", email="owner@example.com")
     db_session.add(owner)
     db_session.commit()
@@ -287,6 +332,8 @@ def test_folder_chat_detail_reflects_documents_added_later(authenticated_client,
     user = _authenticated_user(db_session)
     folder = _folder(db_session, user)
     db_session.add(_ready_document(user, "first.pdf", folder=folder))
+    db_session.commit()
+    db_session.add(Subscription(user_id=user.id, plan_id="pro_monthly", stripe_subscription_id="sub_folder_stream", status="active"))
     db_session.commit()
     chat_id = authenticated_client.post("/api/chats", json={"folder_id": str(folder.id)}).json()["id"]
 
@@ -305,6 +352,8 @@ def test_folder_chat_stream_widens_scope_as_folder_grows(authenticated_client, d
     folder = _folder(db_session, user)
     first = _ready_document(user, "first.pdf", folder=folder)
     db_session.add(first)
+    db_session.commit()
+    db_session.add(Subscription(user_id=user.id, plan_id="pro_monthly", stripe_subscription_id="sub_folder_stream", status="active"))
     db_session.commit()
     chat_id = authenticated_client.post("/api/chats", json={"folder_id": str(folder.id)}).json()["id"]
 
@@ -337,6 +386,8 @@ def test_folder_chat_stream_widens_scope_as_folder_grows(authenticated_client, d
 def test_folder_chat_stream_with_no_ready_documents_returns_409(authenticated_client, db_session):
     user = _authenticated_user(db_session)
     folder = _folder(db_session, user)
+    db_session.add(Subscription(user_id=user.id, plan_id="pro_monthly", stripe_subscription_id="sub_folder_stream", status="active"))
+    db_session.commit()
     chat_id = authenticated_client.post("/api/chats", json={"folder_id": str(folder.id)}).json()["id"]
 
     response = authenticated_client.post(
@@ -350,9 +401,18 @@ def test_folder_chat_stream_with_no_ready_documents_returns_409(authenticated_cl
 def test_folder_chat_stream_over_plan_scope_limit_returns_402(authenticated_client, db_session):
     user = _authenticated_user(db_session)
     folder = _folder(db_session, user)
+    db_session.add(
+        Subscription(
+            user_id=user.id,
+            plan_id="pro_monthly",
+            stripe_subscription_id="sub_folder_scope_limit",
+            status="active",
+        )
+    )
+    db_session.commit()
     chat_id = authenticated_client.post("/api/chats", json={"folder_id": str(folder.id)}).json()["id"]
-    # The free plan allows a scope of 2; the folder grew to 3 after creation.
-    db_session.add_all([_ready_document(user, f"doc-{index}.pdf", folder=folder) for index in range(3)])
+    # Pro folder chats can still exceed the 10-document scope cap as folders grow.
+    db_session.add_all([_ready_document(user, f"doc-{index}.pdf", folder=folder) for index in range(11)])
     db_session.commit()
 
     response = authenticated_client.post(
@@ -371,7 +431,15 @@ def test_delete_folder_keeps_documents_and_removes_folder_chats(authenticated_cl
     user = _authenticated_user(db_session)
     folder = _folder(db_session, user)
     document = _ready_document(user, folder=folder)
-    db_session.add(document)
+    db_session.add_all([
+        document,
+        Subscription(
+            user_id=user.id,
+            plan_id="pro_monthly",
+            stripe_subscription_id="sub_folder_delete",
+            status="active",
+        ),
+    ])
     db_session.commit()
     chat_id = UUID(authenticated_client.post("/api/chats", json={"folder_id": str(folder.id)}).json()["id"])
     db_session.add(

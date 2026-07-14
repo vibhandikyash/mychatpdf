@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ScopePicker } from "./ScopePicker";
+import { renderWithRouter } from "../../test/test-utils";
 import { DocumentSummary } from "../../types";
 
 const readyDocuments: DocumentSummary[] = [
@@ -25,7 +26,7 @@ const readyDocuments: DocumentSummary[] = [
 
 describe("ScopePicker", () => {
   it("lists ready documents with format badges", () => {
-    render(<ScopePicker documents={readyDocuments} />);
+    renderWithRouter(<ScopePicker documents={readyDocuments} />);
 
     expect(screen.getByRole("checkbox", { name: /contract-a\.pdf/i })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /kickoff-deck\.pptx/i })).toBeInTheDocument();
@@ -34,14 +35,14 @@ describe("ScopePicker", () => {
   });
 
   it("shows an empty state when no documents are ready", () => {
-    render(<ScopePicker documents={[]} />);
+    renderWithRouter(<ScopePicker documents={[]} />);
 
     expect(screen.getByText(/no documents are ready yet/i)).toBeInTheDocument();
   });
 
   it("disables start until a document is selected and tracks the count", async () => {
     const user = userEvent.setup();
-    render(<ScopePicker documents={readyDocuments} />);
+    renderWithRouter(<ScopePicker documents={readyDocuments} />);
 
     const startButton = screen.getByRole("button", { name: /start conversation/i });
     expect(startButton).toBeDisabled();
@@ -58,11 +59,28 @@ describe("ScopePicker", () => {
     expect(screen.getByText("1 document selected")).toBeInTheDocument();
   });
 
+  it("shows an upgrade dialog when a free user tries to add a second document", async () => {
+    const user = userEvent.setup();
+    renderWithRouter(<ScopePicker documents={readyDocuments} maxDocumentScope={1} />);
+
+    const first = screen.getByRole("checkbox", { name: /contract-a\.pdf/i });
+    const second = screen.getByRole("checkbox", { name: /kickoff-deck\.pptx/i });
+
+    await user.click(first);
+    await user.click(second);
+
+    expect(first).toBeChecked();
+    expect(second).not.toBeChecked();
+    expect(screen.getByRole("dialog", { name: /upgrade for multi-document chat/i })).toBeInTheDocument();
+    expect(screen.getByText(/multi-document conversations are available on the pro plan/i)).toBeInTheDocument();
+    expect(screen.getByText("1 document selected")).toBeInTheDocument();
+  });
+
   it("creates a conversation with the selected documents and optional title", async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn();
 
-    render(<ScopePicker documents={readyDocuments} onCreate={onCreate} />);
+    renderWithRouter(<ScopePicker documents={readyDocuments} onCreate={onCreate} />);
     await user.click(screen.getByRole("checkbox", { name: /contract-a\.pdf/i }));
     await user.click(screen.getByRole("checkbox", { name: /kickoff-deck\.pptx/i }));
     await user.type(screen.getByRole("textbox", { name: /title/i }), "Contract vs deck");
@@ -76,7 +94,7 @@ describe("ScopePicker", () => {
     const user = userEvent.setup();
     const onCreate = vi.fn();
 
-    render(<ScopePicker documents={readyDocuments} onCreate={onCreate} />);
+    renderWithRouter(<ScopePicker documents={readyDocuments} onCreate={onCreate} />);
     await user.click(screen.getByRole("checkbox", { name: /contract-a\.pdf/i }));
     await user.click(screen.getByRole("button", { name: /start conversation/i }));
 

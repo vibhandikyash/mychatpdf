@@ -24,7 +24,7 @@ from app.models import (
 )
 from app.models.mixins import utc_now
 from app.services.billing import get_active_plan
-from app.services.usage import check_and_increment, check_model_allowed, refund_ai_message
+from app.services.usage import check_and_increment, check_model_allowed, check_scope_size, refund_ai_message
 from app.services.vector import (
     DOCUMENT_INTELLIGENCE_SOURCE_LIMIT,
     DOCUMENT_INTELLIGENCE_VERSION,
@@ -508,9 +508,11 @@ def stream_chat_response(
     # Re-validate against the current plan so a user who downgraded cannot
     # keep streaming with a premium model. Tiers ("fast"/"quality") are gated
     # on the resolved OpenAI model.
+    plan = get_active_plan(db, user)
+    check_scope_size(plan, [document.id for document in scope])
     answer_model = settings.resolve_chat_model(model if model is not None else chat.model)
     if answer_model:
-        check_model_allowed(get_active_plan(db, user), answer_model)
+        check_model_allowed(plan, answer_model)
     check_and_increment(db, user, "ai_message")
 
     if model is not None:

@@ -6,7 +6,8 @@ const LIMIT_MESSAGES: Record<string, string> = {
   upload: "You have reached the upload limit in your plan for this period.",
   storage: "This file would go past the storage limit in your plan.",
   document_scope: "Your plan limits how many documents one conversation can include.",
-  chat_model: "Quality answers are available on the Pro plan."
+  chat_model: "Quality answers are available on the Pro plan.",
+  folder_chat: "Folder chat is available on the Pro plan."
 };
 
 export function limitExceededMessage(error: LimitExceededError) {

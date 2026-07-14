@@ -21,6 +21,12 @@ function intervalLabel(interval: BillingPlan["interval"]) {
   return "Free forever";
 }
 
+function priceLabel(interval: BillingPlan["interval"]): { amount: string; suffix: string } | null {
+  if (interval === "month") return { amount: "$19.99", suffix: "/mo" };
+  if (interval === "year") return { amount: "$9.99", suffix: "/yr" };
+  return null;
+}
+
 function checkoutReturnState(params: URLSearchParams): "success" | "scheduled" | "cancelled" | null {
   const value = params.get("checkout") ?? params.get("status");
   if (value === "success") {
@@ -252,6 +258,20 @@ export function BillingPage({ api }: BillingPageProps) {
                         </span>
                       ) : null}
                     </div>
+                    {(() => {
+                      const price = priceLabel(plan.interval);
+                      return price ? (
+                        <div className="mt-3 flex items-baseline gap-0.5">
+                          <span className="text-3xl font-bold text-ink">{price.amount}</span>
+                          <span className="text-sm text-slate-500">{price.suffix}</span>
+                          {plan.interval === "year" && (
+                            <span className="ml-2 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                              Save 50%
+                            </span>
+                          )}
+                        </div>
+                      ) : null;
+                    })()}
                     <ul className="mt-4 flex-1 space-y-1.5 text-sm text-slate-600">
                       <li>{plan.limitAiMessages} AI messages per period</li>
                       <li>{plan.limitUploads} uploads per period</li>

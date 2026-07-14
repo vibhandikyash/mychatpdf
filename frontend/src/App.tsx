@@ -58,6 +58,9 @@ const FILE_URL_RETRY_MS = 3000;
 const DOCUMENTS_CHANGED_EVENT = "mychatpdf:documents-changed";
 const FOLDERS_CHANGED_EVENT = "mychatpdf:folders-changed";
 const CHATS_CHANGED_EVENT = "mychatpdf:chats-changed";
+const SIGN_IN_PATH = "/sign-in";
+const SIGN_UP_PATH = "/sign-up";
+const APP_PATH = "/app";
 
 interface DocumentsChangedDetail {
   document?: DocumentSummary;
@@ -73,16 +76,29 @@ interface ChatsChangedDetail {
 
 export function App() {
   const navigate = useNavigate();
+  const signInUrl = useMemo(() => toAppUrl(SIGN_IN_PATH), []);
+  const signUpUrl = useMemo(() => toAppUrl(SIGN_UP_PATH), []);
   const activeClerkPublishableKey = clerkAuthEnabled ? clerkPublishableKey : undefined;
   const routes = (
     <Routes>
-      <Route path="/" element={<Navigate to="/app" replace />} />
+      <Route path="/" element={<Navigate to={APP_PATH} replace />} />
       <Route
         path="/sso-callback"
-        element={clerkAuthEnabled ? <AuthenticateWithRedirectCallback /> : <Navigate to="/sign-in" replace />}
+        element={
+          clerkAuthEnabled ? (
+            <AuthenticateWithRedirectCallback
+              signInUrl={signInUrl}
+              signUpUrl={signUpUrl}
+              signInFallbackRedirectUrl={APP_PATH}
+              signUpFallbackRedirectUrl={APP_PATH}
+            />
+          ) : (
+            <Navigate to={SIGN_IN_PATH} replace />
+          )
+        }
       />
-      <Route path="/sign-in/*" element={<AuthPage mode="sign-in" />} />
-      <Route path="/sign-up/*" element={<AuthPage mode="sign-up" />} />
+      <Route path="/sign-in/*" element={<AuthRoute mode="sign-in" />} />
+      <Route path="/sign-up/*" element={<AuthRoute mode="sign-up" />} />
       <Route
         path="/app"
         element={
@@ -177,16 +193,75 @@ export function App() {
   return (
     <ClerkProvider
       publishableKey={activeClerkPublishableKey}
-      routerPush={(to) => navigate(to)}
-      routerReplace={(to) => navigate(to, { replace: true })}
-      signInUrl="/sign-in"
-      signUpUrl="/sign-up"
-      signInFallbackRedirectUrl="/app"
-      signUpFallbackRedirectUrl="/app"
+      routerPush={(to) => navigate(toRouterPath(to))}
+      routerReplace={(to) => navigate(toRouterPath(to), { replace: true })}
+      signInUrl={signInUrl}
+      signUpUrl={signUpUrl}
+      signInFallbackRedirectUrl={APP_PATH}
+      signUpFallbackRedirectUrl={APP_PATH}
     >
       {routes}
     </ClerkProvider>
   );
+}
+
+function toAppUrl(path: string) {
+  if (typeof window === "undefined") {
+    return path;
+  }
+
+  return new URL(path, window.location.origin).toString();
+}
+
+function toRouterPath(to: string) {
+  if (typeof window === "undefined") {
+    return to;
+  }
+
+  try {
+    const url = new URL(to);
+    if (url.origin === window.location.origin) {
+      return `${url.pathname}${url.search}${url.hash}`;
+    }
+  } catch {
+    return to;
+  }
+
+  return to;
+}
+
+function AuthRoute({ mode }: { mode: "sign-in" | "sign-up" }) {
+  if (!clerkAuthEnabled) {
+    return <AuthPage mode={mode} />;
+  }
+
+  return <SignedOutAuthRoute mode={mode} />;
+}
+
+function SignedOutAuthRoute({ mode }: { mode: "sign-in" | "sign-up" }) {
+  const { isLoaded, isSignedIn, signOut } = useAuth();
+  const [isClearingSession, setIsClearingSession] = useState(false);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || isClearingSession) {
+      return;
+    }
+
+    setIsClearingSession(true);
+    void signOut().catch(() => setIsClearingSession(false));
+  }, [isClearingSession, isLoaded, isSignedIn, signOut]);
+
+  if (!isLoaded || isSignedIn || isClearingSession) {
+    return (
+      <main aria-busy="true" className="min-h-screen bg-mist">
+        <span role="status" aria-label="Preparing sign in" className="sr-only">
+          Preparing sign in
+        </span>
+      </main>
+    );
+  }
+
+  return <AuthPage mode={mode} />;
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -267,6 +342,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const [folders, setFolders] = useState<FolderSummary[]>([]);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [folderNameDraft, setFolderNameDraft] = useState("");
+  const [showContactModal, setShowContactModal] = useState(false);
 
   useEffect(() => {
     if (!api) {
@@ -578,13 +654,67 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       <div className="mt-4 border-t border-slate-200 pt-4">
         {clerkAuthEnabled ? (
-          <div className="flex items-center gap-3 rounded-lg bg-slate-50 p-2">
-            <UserButton afterSignOutUrl="/sign-in" />
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-ink">Account</p>
-              <p className="text-xs text-slate-500">Workspace controls</p>
+          <>
+            <div className="relative flex items-center gap-3 rounded-lg bg-slate-50 p-2 cursor-pointer hover:bg-slate-100 transition-colors">
+              <UserButton afterSignOutUrl="/sign-in">
+                <UserButton.MenuItems>
+                  <UserButton.Action
+                    label="Contact us"
+                    labelIcon={<span style={{ fontSize: 14 }}>✉️</span>}
+                    onClick={() => setShowContactModal(true)}
+                  />
+                </UserButton.MenuItems>
+              </UserButton>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-ink">Account</p>
+                <p className="text-xs text-slate-500">Workspace controls</p>
+              </div>
+              {/* Invisible overlay to make the entire box trigger the UserButton */}
+              <div
+                className="absolute inset-0 rounded-lg"
+                onClick={(e) => {
+                  const btn = e.currentTarget.parentElement?.querySelector('button[data-clerk-component="UserButton"], button.cl-userButtonTrigger, button[aria-label*="Open user button"]') as HTMLButtonElement | null;
+                  if (btn) btn.click();
+                }}
+              />
             </div>
-          </div>
+
+            {/* Contact Us Modal */}
+            {showContactModal && (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center"
+                style={{ backgroundColor: "rgba(0,0,0,0.35)" }}
+                onClick={() => setShowContactModal(false)}
+              >
+                <div
+                  className="relative w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Close button */}
+                  <button
+                    aria-label="Close contact modal"
+                    className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 transition-colors"
+                    onClick={() => setShowContactModal(false)}
+                  >
+                    <X size={18} />
+                  </button>
+
+                  {/* Support section */}
+                  <h2 className="mb-1 text-base font-semibold text-slate-900">Contact support</h2>
+                  <p className="text-sm text-slate-600">
+                    For questions or feedback about the product, your account, or payment, please contact our support at{" "}
+                    <a
+                      href="mailto:contact@mypdfchat.com"
+                      className="font-medium text-violet-600 hover:underline"
+                    >
+                      contact@mypdfchat.com
+                    </a>
+                    .
+                  </p>
+                </div>
+              </div>
+            )}
+          </>
         ) : (
           <p className="rounded-md bg-slate-100 px-3 py-2 text-xs leading-5 text-slate-600">
             Configure Clerk to enable account controls.
@@ -679,6 +809,7 @@ function FolderRoute() {
   const { folderId } = useParams();
   const navigate = useNavigate();
   const api = useAuthenticatedApiClient();
+  const planCapabilities = usePlanCapabilities(api);
 
   if (!folderId) {
     return <Navigate to="/app/documents" replace />;
@@ -691,6 +822,7 @@ function FolderRoute() {
       onOpenDocument={(documentId) => navigate(`/app/documents/${documentId}`)}
       onOpenChat={(chatId) => navigate(`/app/chats/${chatId}`)}
       onDeleted={() => navigate("/app/documents")}
+      folderChatAvailable={planCapabilities.premiumFeaturesAvailable}
       onUploadFile={async (file) => {
         if (!api) {
           return;
@@ -734,6 +866,49 @@ function createQualityUpgradeError() {
   return new LimitExceededError("chat_model", 0, 0);
 }
 
+interface PlanCapabilities {
+  documentScopeLimit?: number;
+  premiumFeaturesAvailable?: boolean;
+}
+
+function usePlanCapabilities(api: ApiClient | null): PlanCapabilities {
+  const [capabilities, setCapabilities] = useState<PlanCapabilities>({});
+
+  useEffect(() => {
+    if (!api) {
+      setCapabilities({});
+      return;
+    }
+
+    const apiClient = api;
+    let cancelled = false;
+
+    async function refreshPlanCapabilities() {
+      try {
+        const [subscription, plans] = await Promise.all([getBillingMe(apiClient), getPlans(apiClient)]);
+        const activePlan = plans.find((plan) => plan.id === subscription.plan.id);
+        if (!cancelled) {
+          setCapabilities({
+            documentScopeLimit: subscription.plan.id === "free" ? 1 : activePlan?.limitDocumentScope,
+            premiumFeaturesAvailable: subscription.plan.id !== "free"
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setCapabilities({});
+        }
+      }
+    }
+
+    void refreshPlanCapabilities();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  return capabilities;
+}
 function useQualityAnswerAvailability(api: ApiClient | null) {
   const [qualityAvailable, setQualityAvailable] = useState<boolean | undefined>(undefined);
 
@@ -927,6 +1102,7 @@ function ChatsRoute() {
 function NewChatRoute() {
   const navigate = useNavigate();
   const api = useAuthenticatedApiClient();
+  const planCapabilities = usePlanCapabilities(api);
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -980,6 +1156,7 @@ function NewChatRoute() {
         documents={documents}
         isLoading={isLoading}
         isCreating={isCreating}
+        maxDocumentScope={planCapabilities.documentScopeLimit}
         onCreate={(documentIds, title) => void handleCreate(documentIds, title)}
       />
     </>

@@ -13,7 +13,7 @@ const plans = [
     limit_ai_messages: 25,
     limit_uploads: 3,
     limit_storage_mb: 50,
-    limit_document_scope: 2,
+    limit_document_scope: 1,
     allowed_chat_models: ["gpt-4.1-mini"]
   },
   {

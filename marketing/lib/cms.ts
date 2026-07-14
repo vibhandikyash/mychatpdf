@@ -151,7 +151,7 @@ const FALLBACK_SETTINGS: SiteSettings = {
   siteName: "MyPDFChat",
   tagline: "Chat with your documents, with citations",
   companyName: "MyPDFChat Inc.",
-  contactEmail: "hello@mychatpdf.example",
+  contactEmail: "contact@mypdfchat.com",
   navItems: [
     { label: "Services", href: "/services" },
     { label: "Blog", href: "/blog" },
