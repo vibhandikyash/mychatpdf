@@ -34,6 +34,9 @@ const supportedFlow = [
   }
 ];
 
+const FREE_PLAN_MAX_UPLOAD_MB = 20;
+const PREMIUM_PLAN_MAX_UPLOAD_MB = 50;
+
 const ACTIVITY_LABELS: Record<string, string> = {
   document_uploaded: "Document uploaded",
   conversation_updated: "Conversation updated",
@@ -85,6 +88,8 @@ export function DashboardPage({ api, onUploadFile, onOpenChat }: DashboardPagePr
     }
   }
 
+  const maxFileSizeMb = data?.subscription.plan.id !== "free" && data ? PREMIUM_PLAN_MAX_UPLOAD_MB : FREE_PLAN_MAX_UPLOAD_MB;
+
   return (
     <main className="min-h-full bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_52%,#ffffff_100%)] px-4 py-8 sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">
@@ -100,7 +105,7 @@ export function DashboardPage({ api, onUploadFile, onOpenChat }: DashboardPagePr
 
         <section className="mx-auto w-full max-w-5xl rounded-2xl border border-teal-100 bg-white p-5 shadow-panel">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.86fr)]">
-            <UploadDropzone onAccepted={handleAccepted} initialProgress={72} />
+            <UploadDropzone maxFileSizeMb={maxFileSizeMb} onAccepted={handleAccepted} initialProgress={72} />
 
             <div className="brand-soft-surface flex min-h-[280px] flex-col rounded-xl border border-teal-100 p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sea">Supported flow</p>

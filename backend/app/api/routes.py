@@ -27,7 +27,8 @@ from app.services.chat import get_or_create_chat, stream_chat_response
 from app.services.preview import PREVIEW_PDF_FORMATS, DocumentPreviewConverter
 from app.services.processing import DEFAULT_CHUNK_OVERLAP_TOKENS, UnsupportedFileError
 from app.services.storage import build_document_object_key, get_storage_service
-from app.services.usage import check_and_increment, check_storage
+from app.services.billing import FREE_PLAN_ID, get_active_plan
+from app.services.usage import BYTES_PER_MB, LimitExceeded, check_and_increment, check_storage
 from app.services.vector import VectorService, get_vector_service
 from app.worker import enqueue_document_processing
 
@@ -145,6 +146,8 @@ def list_documents(
     return {"items": [_document_summary(document) for document in visible_documents], "next_cursor": next_cursor}
 
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
+FREE_PLAN_MAX_UPLOAD_MB = 20
+PREMIUM_PLAN_MAX_UPLOAD_MB = 50
 
 # extension -> (format, canonical content type). Browsers are inconsistent, so a
 # generic content type falls back to the extension.
@@ -177,6 +180,16 @@ def _resolve_upload_format(file: UploadFile) -> tuple[str, str]:
         return document_format, content_type
     raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=UNSUPPORTED_UPLOAD_DETAIL)
 
+def _plan_upload_limit_mb(plan_id: str) -> int:
+    return FREE_PLAN_MAX_UPLOAD_MB if plan_id == FREE_PLAN_ID else PREMIUM_PLAN_MAX_UPLOAD_MB
+
+
+def _check_plan_upload_size(incoming_bytes: int, limit_mb: int) -> None:
+    if incoming_bytes > limit_mb * BYTES_PER_MB:
+        used_mb = (incoming_bytes + BYTES_PER_MB - 1) // BYTES_PER_MB
+        raise LimitExceeded("file_size", limit=limit_mb, used=used_mb)
+
+
 async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
     chunks = bytearray()
     while True:
@@ -202,16 +215,19 @@ async def upload_document(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
     folder = _owned_folder_or_422(db, current_user, folder_id) if folder_id else None
-    max_bytes = settings.max_upload_mb * 1024 * 1024
+    plan = get_active_plan(db, current_user)
+    plan_upload_limit_mb = _plan_upload_limit_mb(plan.id)
+    max_upload_mb = max(settings.max_upload_mb, PREMIUM_PLAN_MAX_UPLOAD_MB)
+    max_bytes = max_upload_mb * BYTES_PER_MB
     parsed_content_length = int(content_length) if content_length and content_length.isdigit() else None
     if parsed_content_length is not None and parsed_content_length > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File exceeds the configured upload limit",
         )
-
     document_format, content_type = _resolve_upload_format(file)
     content = await _read_upload(file, max_bytes)
+    _check_plan_upload_size(len(content), plan_upload_limit_mb)
 
     # Plan limits before any document row exists; the increment only becomes
     # durable at the final commit, so a failed upload does not consume quota.

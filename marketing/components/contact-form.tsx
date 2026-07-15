@@ -121,8 +121,8 @@ export default function ContactForm() {
 
   if (status === "sent") {
     return (
-      <Reveal direction="zoom">
-        <div className="py-6 text-center sm:py-10" role="status">
+      <Reveal direction="zoom" className="flex h-full min-h-[26rem] sm:min-h-[30rem]">
+        <div className="flex w-full flex-col items-center justify-center text-center" role="status">
           <div className="bg-ice text-sea mx-auto flex h-14 w-14 items-center justify-center rounded-full">
             <CheckIcon className="h-7 w-7" />
           </div>

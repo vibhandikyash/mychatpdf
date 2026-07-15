@@ -1,7 +1,9 @@
 import { ChangeEvent, DragEvent, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { FileUp, Loader2, UploadCloud } from "lucide-react";
 
-const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+const DEFAULT_MAX_FILE_SIZE_MB = 20;
+const BYTES_PER_MB = 1024 * 1024;
 
 export const SUPPORTED_UPLOAD_EXTENSIONS = [".pdf", ".docx", ".pptx", ".txt", ".rtf"] as const;
 export const UPLOAD_ACCEPT = SUPPORTED_UPLOAD_EXTENSIONS.join(",");
@@ -9,6 +11,7 @@ export const UPLOAD_ACCEPT = SUPPORTED_UPLOAD_EXTENSIONS.join(",");
 interface UploadDropzoneProps {
   onAccepted: (file: File) => void | Promise<void>;
   initialProgress?: number;
+  maxFileSizeMb?: number;
 }
 
 function isSupportedFile(file: File) {
@@ -16,23 +19,31 @@ function isSupportedFile(file: File) {
   return SUPPORTED_UPLOAD_EXTENSIONS.some((extension) => name.endsWith(extension));
 }
 
-export function UploadDropzone({ onAccepted, initialProgress = 100 }: UploadDropzoneProps) {
+export function UploadDropzone({
+  onAccepted,
+  initialProgress = 100,
+  maxFileSizeMb = DEFAULT_MAX_FILE_SIZE_MB
+}: UploadDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; showUpgradeLink?: boolean } | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const maxFileSizeBytes = maxFileSizeMb * BYTES_PER_MB;
 
   function acceptFile(file: File) {
     if (!isSupportedFile(file)) {
-      setError("Unsupported file type. Upload a PDF, DOCX, PPTX, TXT, or RTF file.");
+      setError({ message: "Unsupported file type. Upload a PDF, DOCX, PPTX, TXT, or RTF file." });
       setFileName(null);
       setProgress(0);
       return;
     }
 
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      setError("File too large. Upload a file under 20 MB.");
+    if (file.size > maxFileSizeBytes) {
+      setError({
+        message: `Max file size is ${maxFileSizeMb} MB for the ${maxFileSizeMb <= DEFAULT_MAX_FILE_SIZE_MB ? "free" : "current"} plan.`,
+        showUpgradeLink: maxFileSizeMb <= DEFAULT_MAX_FILE_SIZE_MB
+      });
       setFileName(null);
       setProgress(0);
       return;
@@ -98,7 +109,16 @@ export function UploadDropzone({ onAccepted, initialProgress = 100 }: UploadDrop
 
       {error ? (
         <p role="alert" className="mx-auto mt-4 max-w-md rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+          {error.message}
+          {error.showUpgradeLink ? (
+            <>
+              {" "}
+              <Link to="/app/billing" className="font-semibold underline hover:no-underline">
+                Upgrade your plan
+              </Link>
+              {" to upload files up to 50 MB."}
+            </>
+          ) : null}
         </p>
       ) : null}
 

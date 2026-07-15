@@ -22,7 +22,10 @@ Set these in `.env.local` (gitignored). `.env.example` lists the same keys with 
 | `CONTENTFUL_PREVIEW_TOKEN` | Preview API token (reserved for draft previews, not used yet) |
 | `CONTENTFUL_ENVIRONMENT` | Contentful environment, normally `master` |
 | `REVALIDATE_SECRET` | Shared secret for `POST /api/revalidate` |
-| `CONTACT_WEBHOOK_URL` | Optional. If set, contact form submissions are POSTed here as JSON |
+| `CONTACT_WEBHOOK_URL` | Optional. If set, contact form submissions are also POSTed here as JSON |
+| `RESEND_API_KEY` | Resend API key used by `POST /api/contact` to send contact notifications |
+| `CONTACT_TO_EMAIL` | Inbox that receives contact form messages. Defaults to `admin@mypdfchat.com` |
+| `CONTACT_FROM_EMAIL` | Sender used for contact notifications. Defaults to `MyPDFChat <onboarding@resend.dev>` until a client-owned domain is verified |
 | `NEXT_PUBLIC_APP_URL` | URL of the product app for Sign in / Get started buttons. Defaults to `https://app.mychatpdf.example` |
 
 The Contentful management (CMA) token is deliberately NOT part of the app env. It is only needed by the one-off setup scripts below; pass it inline as `CONTENTFUL_CMA_TOKEN` when running them and never commit it.
@@ -75,8 +78,9 @@ The handler calls `revalidateTag("cms")`, so edited content appears on the next 
 
 ## Contact form
 
-`components/contact-form.tsx` posts to `POST /api/contact`, which validates the payload (name, email, message, email format), logs it server-side, and forwards it to `CONTACT_WEBHOOK_URL` if configured. Email provider integration is a marked upgrade path in the route handler.
+`components/contact-form.tsx` posts to `POST /api/contact`, which validates the payload (name, email, message, email format), verifies Turnstile, and sends a notification through Resend. Set `RESEND_API_KEY` in the deployment environment. Until a client-owned sending domain is verified, keep `CONTACT_FROM_EMAIL` as `MyPDFChat <onboarding@resend.dev>` and use the visitor address as `Reply-To`; replies from the receiving inbox go back to the visitor. If `CONTACT_WEBHOOK_URL` is configured, the route also forwards the submission as JSON after the email is sent.
 
 ## Pages
 
 `/` (landing, CMS sections), `/services`, `/about`, `/blog`, `/blog/[slug]`, `/contact`, `/faq`, `/privacy`, `/terms`, `/refund-policy`, plus `sitemap.xml` and `robots.txt` generated from `app/sitemap.ts` and `app/robots.ts`.
+
