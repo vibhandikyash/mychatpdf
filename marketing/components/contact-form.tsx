@@ -1,25 +1,32 @@
 "use client";
 
 import Script from "next/script";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Reveal from "@/components/motion/reveal";
 import { CheckIcon } from "@/components/icons";
 
 type Status = "idle" | "sending" | "sent" | "error";
 
+type TurnstileRenderOptions = {
+  action: string;
+  callback: (token: string) => void;
+  "error-callback": () => void;
+  "expired-callback": () => void;
+  sitekey: string;
+  theme: "light";
+};
+
 const TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA";
 const turnstileSiteKey =
   process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ??
   (process.env.NODE_ENV === "production" ? undefined : TURNSTILE_TEST_SITE_KEY);
-const TURNSTILE_SUCCESS_CALLBACK = "onContactTurnstileSuccess";
-const TURNSTILE_RESET_CALLBACK = "onContactTurnstileReset";
 
 declare global {
   interface Window {
-    onContactTurnstileReset?: () => void;
-    onContactTurnstileSuccess?: (token: string) => void;
     turnstile?: {
-      reset: () => void;
+      remove: (widgetId: string) => void;
+      render: (container: HTMLElement, options: TurnstileRenderOptions) => string | undefined;
+      reset: (widgetId?: string) => void;
     };
   }
 }
@@ -28,28 +35,48 @@ export default function ContactForm() {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [turnstileToken, setTurnstileToken] = useState("");
+  const [isTurnstileReady, setIsTurnstileReady] = useState(() =>
+    typeof window !== "undefined" && Boolean(window.turnstile)
+  );
+  const turnstileContainerRef = useRef<HTMLDivElement | null>(null);
+  const turnstileWidgetIdRef = useRef<string | null>(null);
   const isTurnstileRequired = Boolean(turnstileSiteKey);
   const isTurnstileVerified = !isTurnstileRequired || Boolean(turnstileToken);
   const isSubmitDisabled = status === "sending" || !isTurnstileVerified;
 
+
   useEffect(() => {
-    if (!turnstileSiteKey) {
+    if (!turnstileSiteKey || !isTurnstileReady || !turnstileContainerRef.current || turnstileWidgetIdRef.current) {
       return;
     }
 
-    window.onContactTurnstileSuccess = (token: string) => {
-      setTurnstileToken(token);
-      setError(null);
-    };
-    window.onContactTurnstileReset = () => {
-      setTurnstileToken("");
-    };
+    const widgetId = window.turnstile?.render(turnstileContainerRef.current, {
+      action: "contact",
+      callback: (token: string) => {
+        setTurnstileToken(token);
+        setError(null);
+      },
+      "error-callback": () => {
+        setTurnstileToken("");
+      },
+      "expired-callback": () => {
+        setTurnstileToken("");
+      },
+      sitekey: turnstileSiteKey,
+      theme: "light",
+    });
+
+    if (widgetId) {
+      turnstileWidgetIdRef.current = widgetId;
+    }
 
     return () => {
-      delete window.onContactTurnstileSuccess;
-      delete window.onContactTurnstileReset;
+      if (turnstileWidgetIdRef.current) {
+        window.turnstile?.remove(turnstileWidgetIdRef.current);
+        turnstileWidgetIdRef.current = null;
+      }
     };
-  }, []);
+  }, [isTurnstileReady]);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -89,7 +116,7 @@ export default function ContactForm() {
 
   function resetTurnstile() {
     setTurnstileToken("");
-    window.turnstile?.reset();
+    window.turnstile?.reset(turnstileWidgetIdRef.current ?? undefined);
   }
 
   if (status === "sent") {
@@ -147,16 +174,12 @@ export default function ContactForm() {
       </div>
       {turnstileSiteKey ? (
         <>
-          <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js" strategy="afterInteractive" />
-          <div
-            className="cf-turnstile"
-            data-sitekey={turnstileSiteKey}
-            data-action="contact"
-            data-callback={TURNSTILE_SUCCESS_CALLBACK}
-            data-error-callback={TURNSTILE_RESET_CALLBACK}
-            data-expired-callback={TURNSTILE_RESET_CALLBACK}
-            data-theme="light"
+          <Script
+            src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+            strategy="afterInteractive"
+            onReady={() => setIsTurnstileReady(true)}
           />
+          <div ref={turnstileContainerRef} />
         </>
       ) : null}
       {error && (
