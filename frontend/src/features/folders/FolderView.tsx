@@ -17,6 +17,7 @@ interface FolderViewProps {
   onDeleted: () => void;
   onUploadFile: (file: File) => Promise<void>;
   folderChatAvailable?: boolean;
+  maxFileSizeMb?: number;
   onFoldersChanged?: () => void;
 }
 
@@ -28,6 +29,7 @@ export function FolderView({
   onDeleted,
   onUploadFile,
   folderChatAvailable,
+  maxFileSizeMb,
   onFoldersChanged
 }: FolderViewProps) {
   const [folders, setFolders] = useState<FolderSummary[]>([]);
@@ -320,7 +322,7 @@ export function FolderView({
         </div>
       )}
 
-      <UploadDropzone onAccepted={handleUpload} initialProgress={72} />
+      <UploadDropzone maxFileSizeMb={maxFileSizeMb} onAccepted={handleUpload} initialProgress={72} />
     </section>
   );
 }

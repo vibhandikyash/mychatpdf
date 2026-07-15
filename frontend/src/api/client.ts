@@ -14,7 +14,7 @@ export class ApiError extends Error {
   }
 }
 
-export type LimitKind = "ai_message" | "upload" | "storage" | "document_scope" | "chat_model" | "folder_chat";
+export type LimitKind = "ai_message" | "upload" | "storage" | "document_scope" | "chat_model" | "folder_chat" | "file_size";
 
 export class LimitExceededError extends ApiError {
   constructor(

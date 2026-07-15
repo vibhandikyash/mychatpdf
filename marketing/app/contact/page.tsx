@@ -27,13 +27,13 @@ export default async function ContactPage() {
         subtitle={page?.body ?? "Questions about the product, pricing, or your account? Send us a message."}
       />
       <section className="relative mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20">
-        {/* Paper plane rides the dashed path as you scroll — message on its way. */}
+        {/* Paper plane rides the dashed path as you scroll; message on its way. */}
         <ScrollDraw className="pointer-events-none absolute -top-16 right-0 left-0">
           <PaperPlaneScene className="top-0 right-4 h-36 w-[30rem] opacity-60" />
         </ScrollDraw>
         <div className="relative grid gap-10 lg:grid-cols-5 lg:gap-14">
-          <Reveal direction="left" className="lg:col-span-3">
-            <div className="card-gradient-border shadow-panel rounded-2xl p-6 sm:p-8">
+          <Reveal direction="left" className="h-full lg:col-span-3">
+            <div className="card-gradient-border shadow-panel h-full rounded-2xl p-6 sm:p-8">
               <ContactForm />
             </div>
           </Reveal>

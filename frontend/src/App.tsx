@@ -823,6 +823,7 @@ function FolderRoute() {
       onOpenChat={(chatId) => navigate(`/app/chats/${chatId}`)}
       onDeleted={() => navigate("/app/documents")}
       folderChatAvailable={planCapabilities.premiumFeaturesAvailable}
+      maxFileSizeMb={planCapabilities.maxFileSizeMb}
       onUploadFile={async (file) => {
         if (!api) {
           return;
@@ -868,6 +869,7 @@ function createQualityUpgradeError() {
 
 interface PlanCapabilities {
   documentScopeLimit?: number;
+  maxFileSizeMb?: number;
   premiumFeaturesAvailable?: boolean;
 }
 
@@ -890,6 +892,7 @@ function usePlanCapabilities(api: ApiClient | null): PlanCapabilities {
         if (!cancelled) {
           setCapabilities({
             documentScopeLimit: subscription.plan.id === "free" ? 1 : activePlan?.limitDocumentScope,
+            maxFileSizeMb: subscription.plan.id === "free" ? 20 : 50,
             premiumFeaturesAvailable: subscription.plan.id !== "free"
           });
         }

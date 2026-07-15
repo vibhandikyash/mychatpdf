@@ -57,7 +57,7 @@ class Settings(BaseSettings):
 
     sentry_dsn: str | None = None
 
-    max_upload_mb: int = Field(default=20, ge=1)
+    max_upload_mb: int = Field(default=50, ge=1)
     max_pdf_pages: int = Field(default=300, ge=1)
     document_preview_conversion_timeout_seconds: int = Field(default=90, ge=5)
     redis_url: str = "redis://redis:6379/0"
