@@ -1,7 +1,7 @@
 "use client";
 
 import Script from "next/script";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Reveal from "@/components/motion/reveal";
 import { CheckIcon } from "@/components/icons";
 
@@ -11,15 +11,58 @@ const TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA";
 const turnstileSiteKey =
   process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ??
   (process.env.NODE_ENV === "production" ? undefined : TURNSTILE_TEST_SITE_KEY);
+const TURNSTILE_SUCCESS_CALLBACK = "onContactTurnstileSuccess";
+const TURNSTILE_RESET_CALLBACK = "onContactTurnstileReset";
+
+declare global {
+  interface Window {
+    onContactTurnstileReset?: () => void;
+    onContactTurnstileSuccess?: (token: string) => void;
+    turnstile?: {
+      reset: () => void;
+    };
+  }
+}
 
 export default function ContactForm() {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const isTurnstileRequired = Boolean(turnstileSiteKey);
+  const isTurnstileVerified = !isTurnstileRequired || Boolean(turnstileToken);
+  const isSubmitDisabled = status === "sending" || !isTurnstileVerified;
+
+  useEffect(() => {
+    if (!turnstileSiteKey) {
+      return;
+    }
+
+    window.onContactTurnstileSuccess = (token: string) => {
+      setTurnstileToken(token);
+      setError(null);
+    };
+    window.onContactTurnstileReset = () => {
+      setTurnstileToken("");
+    };
+
+    return () => {
+      delete window.onContactTurnstileSuccess;
+      delete window.onContactTurnstileReset;
+    };
+  }, []);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!isTurnstileVerified) {
+      setError("Please complete the security check.");
+      return;
+    }
+
     const form = e.currentTarget;
     const data = Object.fromEntries(new FormData(form));
+    if (turnstileToken) {
+      data["cf-turnstile-response"] = turnstileToken;
+    }
     setStatus("sending");
     setError(null);
     try {
@@ -32,6 +75,7 @@ export default function ContactForm() {
       if (!res.ok) {
         setError(body.error ?? "Something went wrong. Please try again.");
         setStatus("error");
+        resetTurnstile();
         return;
       }
       form.reset();
@@ -39,7 +83,13 @@ export default function ContactForm() {
     } catch {
       setError("Network error. Please try again.");
       setStatus("error");
+      resetTurnstile();
     }
+  }
+
+  function resetTurnstile() {
+    setTurnstileToken("");
+    window.turnstile?.reset();
   }
 
   if (status === "sent") {
@@ -102,6 +152,9 @@ export default function ContactForm() {
             className="cf-turnstile"
             data-sitekey={turnstileSiteKey}
             data-action="contact"
+            data-callback={TURNSTILE_SUCCESS_CALLBACK}
+            data-error-callback={TURNSTILE_RESET_CALLBACK}
+            data-expired-callback={TURNSTILE_RESET_CALLBACK}
             data-theme="light"
           />
         </>
@@ -113,7 +166,7 @@ export default function ContactForm() {
       )}
       <button
         type="submit"
-        disabled={status === "sending"}
+        disabled={isSubmitDisabled}
         className="bg-brand-gradient hover:shadow-glow shadow-sea/25 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full px-7 text-base font-semibold text-white shadow-lg transition-all duration-300 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 sm:w-auto"
       >
         {status === "sending" ? "Sending..." : "Send message"}
