@@ -167,12 +167,8 @@ export function PdfViewer({
     if (!pdfDocument || viewerMode !== "pdfjs" || !document.signedPdfUrl || fitZoomDocumentUrl === document.signedPdfUrl) {
       return;
     }
-<<<<<<< Updated upstream
     const loadedPdfDocument = pdfDocument;
     const signedPdfUrl = document.signedPdfUrl;
-=======
-
->>>>>>> Stashed changes
     let cancelled = false;
 
     async function fitInitialZoomToPane() {
@@ -182,11 +178,7 @@ export function PdfViewer({
       }
 
       try {
-<<<<<<< Updated upstream
         const firstPage = await loadedPdfDocument.getPage(1);
-=======
-        const firstPage = await pdfDocument.getPage(1);
->>>>>>> Stashed changes
         if (cancelled) {
           return;
         }
@@ -199,21 +191,13 @@ export function PdfViewer({
           INITIAL_FIT_MAX_ZOOM
         );
 
-<<<<<<< Updated upstream
         setFitZoomDocumentUrl(signedPdfUrl);
-=======
-        setFitZoomDocumentUrl(document.signedPdfUrl);
->>>>>>> Stashed changes
         if (Math.abs(fittedZoom - zoom) > 1) {
           prepareForScaleChange();
           onZoomChange(fittedZoom);
         }
       } catch {
-<<<<<<< Updated upstream
         setFitZoomDocumentUrl(signedPdfUrl);
-=======
-        setFitZoomDocumentUrl(document.signedPdfUrl);
->>>>>>> Stashed changes
       }
     }
 
