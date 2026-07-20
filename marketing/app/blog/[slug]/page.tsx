@@ -8,6 +8,7 @@ import TextBody from "@/components/text-body";
 import { ArrowRightIcon } from "@/components/icons";
 import { blogCover } from "@/lib/blog-cover";
 import { APP_URL, SITE_URL, getBlogPost, getBlogPosts, type BlogPost } from "@/lib/cms";
+import { DEFAULT_OG_IMAGE } from "@/lib/seo";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -20,14 +21,24 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const post = await getBlogPost(slug);
   if (!post) return {};
+  const title = post.seoTitle ?? post.title;
+  const description = post.seoDescription ?? post.excerpt;
   return {
-    title: post.seoTitle ?? post.title,
-    description: post.seoDescription ?? post.excerpt,
+    title,
+    description,
     openGraph: {
-      title: post.seoTitle ?? post.title,
-      description: post.seoDescription ?? post.excerpt,
+      title,
+      description,
+      url: `${SITE_URL}/blog/${slug}`,
       type: "article",
       publishedTime: post.publishDate,
+      images: [DEFAULT_OG_IMAGE],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [DEFAULT_OG_IMAGE],
     },
   };
 }

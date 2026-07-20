@@ -10,8 +10,7 @@ const ENVIRONMENT = process.env.CONTENTFUL_ENVIRONMENT || "master";
 
 export const CMS_TAG = "cms";
 export const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.mychatpdf.example";
-// ponytail: constant base URL; move to an env var when the real domain exists.
-export const SITE_URL = "https://www.mychatpdf.example";
+export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL?.trim() || "https://mypdfchat.com").replace(/\/+$/, "");
 
 // ---------------------------------------------------------------------------
 // Types
