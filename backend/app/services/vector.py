@@ -35,6 +35,7 @@ ANSWER_SYSTEM_PROMPT = (
     "Do not cite derived reasoning unless it depends on a fact or value from the document. "
     "Do not invent facts, citations, page numbers, filenames, or source labels. "
     "Use clean Markdown-style formatting with short paragraphs and bullets when helpful. "
+    "When the user asks for a table, return a valid Markdown table with a header row, separator row, and concise cells. "
     "Use LaTeX for equations when it improves readability. "
     "For whole-document summaries, synthesize the document's purpose, scope, main sections, key points, "
     "and conclusions or action items when present; do not over-focus on one isolated section, appendix, "
@@ -532,6 +533,7 @@ class VectorService:
                         "- If the context contains an explicit answer, solution, conclusion, decision, recommendation, or result, say it is from the document, not derived.\n"
                         "- If the context contains only the question, task, case, exercise, scenario, or problem statement, reason from it and label the answer as derived.\n"
                         "- Format the answer with short paragraphs or bullet lists when it improves readability.\n"
+                        "- When the user asks for a table, return a valid Markdown table with a header row, separator row, and concise cells.\n"
                         "- For whole-document summaries, cover the major themes across the document instead of one narrow section.\n"
                         "- For plain whole-document summary requests, return exactly 5 short bullets, no intro or closing paragraph, about 150 words total unless the user asks for detail.\n"
                         "- If the user asks about each file, each document, all files, all documents, every file, every document, or per-document findings, do not apply the short-summary limit; use one concise section per document.\n"
@@ -591,3 +593,4 @@ def format_source_context(index: int, source: RetrievedSource, *, multi_document
         )
         return f'[S{index} · "{source.document_filename}" {pages}]\nText:\n{source.context or source.excerpt}'
     return f"[Source {index} | {format_page_citation(source)}]\nText:\n{source.context or source.excerpt}"
+

@@ -95,7 +95,8 @@ function fakeApi({
         return new Response(JSON.stringify(usage), { status: 200 });
       }
       if (url.endsWith("/api/billing/portal")) {
-        return new Response(JSON.stringify({ detail: "Billing is not configured" }), { status: portalStatus });
+        const body = portalStatus === 200 ? { url: "https://portal.stripe.test/session" } : { detail: "Billing is not configured" };
+        return new Response(JSON.stringify(body), { status: portalStatus });
       }
       if (url.endsWith("/api/billing/schedule-switch")) {
         return new Response(JSON.stringify({ url: "https://checkout.stripe.test/future" }), { status: 200 });
@@ -134,21 +135,22 @@ describe("BillingPage", () => {
     expect(screen.getByText("10 MB / 50 MB")).toBeInTheDocument();
   });
 
-  it("labels paid plan switches as choosing another plan", async () => {
+  it("labels active paid plan changes as portal switches", async () => {
     renderWithRouter(<BillingPage api={fakeApi({ subscription: activeMonthlySubscription })} />, ["/app/billing"]);
 
     expect(await screen.findByText("Renews on Aug 1, 2026")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /choose this plan/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /switch in billing portal/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /switch in billing portal/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /choose this plan/i })).not.toBeInTheDocument();
   });
 
-  it("shows a helpful message when another paid plan is active", async () => {
+  it("opens the billing portal for active paid plan changes", async () => {
     const user = userEvent.setup();
-    renderWithRouter(<BillingPage api={fakeApi({ subscription: activeMonthlySubscription, switchStatus: 422 })} />, ["/app/billing"]);
+    renderWithRouter(<BillingPage api={fakeApi({ portalStatus: 503, subscription: activeMonthlySubscription, switchStatus: 422 })} />, ["/app/billing"]);
 
-    await user.click(await screen.findByRole("button", { name: /choose this plan/i }));
+    await user.click(await screen.findByRole("button", { name: /switch in billing portal/i }));
 
-    expect(await screen.findByText("You already have Pro Monthly enabled. Cancel it to choose Pro Yearly.")).toBeInTheDocument();
+    expect(await screen.findByText("Billing is not configured in this environment.")).toBeInTheDocument();
+    expect(screen.queryByText("You already have Pro Monthly enabled. Cancel it to choose Pro Yearly.")).not.toBeInTheDocument();
   });
   it("offers checkout for another paid plan after the current canceling plan ends", async () => {
     renderWithRouter(<BillingPage api={fakeApi({ subscription: cancelingProSubscription })} />, ["/app/billing"]);
@@ -201,3 +203,4 @@ describe("BillingPage", () => {
     expect(await screen.findByText(/checkout was cancelled/i)).toBeInTheDocument();
   });
 });
+

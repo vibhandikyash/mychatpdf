@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ChatView } from "./ChatView";
 import { renderWithRouter } from "../../test/test-utils";
@@ -83,4 +83,52 @@ describe("ChatView", () => {
     const pptxCitation = screen.getByRole("link", { name: /open source 2: kickoff-deck\.pptx - slide 3/i });
     expect(pptxCitation).toHaveAttribute("href", "/app/documents/doc-2");
   });
+  it("renders markdown comparison tables as HTML tables", () => {
+    renderWithRouter(
+      <ChatView
+        chat={chat}
+        messages={[
+          messages[0],
+          {
+            id: "msg-table",
+            role: "assistant",
+            content: [
+              "Here is the comparison:",
+              "",
+              "| Category | AI.pdf | Cloud.pdf |",
+              "| --- | --- | --- |",
+              "| Core technologies | Machine learning (p. 1) | Cloud computing (p. 2) |"
+            ].join("\n"),
+            createdAt: "2026-06-12T15:16:00Z",
+            sources: [
+              {
+                sourceId: "src-ai",
+                chunkId: "chunk-ai",
+                documentId: "doc-1",
+                documentFilename: "contract-a.pdf",
+                pageStart: 1,
+                pageEnd: 1,
+                excerpt: "Machine learning is discussed."
+              },
+              {
+                sourceId: "src-cloud",
+                chunkId: "chunk-cloud",
+                documentId: "doc-2",
+                documentFilename: "kickoff-deck.pptx",
+                pageStart: 2,
+                pageEnd: 2,
+                excerpt: "Cloud computing is discussed."
+              }
+            ]
+          }
+        ]}
+      />
+    );
+
+    const table = screen.getByRole("table", { name: /comparison table/i });
+    expect(within(table).getByRole("columnheader", { name: "Category" })).toBeInTheDocument();
+    expect(within(table).getByText(/Machine learning/i)).toBeInTheDocument();
+    expect(screen.queryByText(/\| --- \|/)).not.toBeInTheDocument();
+  });
 });
+

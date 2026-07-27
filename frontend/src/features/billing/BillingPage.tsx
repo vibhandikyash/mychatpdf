@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { BadgeCheck, CreditCard, Loader2, RotateCcw } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { ApiClient, ApiError } from "../../api/client";
-import { createCheckoutSession, createPortalSession, getBillingMe, getPlans, getUsage, schedulePlanSwitch, switchPlan } from "../../api/billing";
+import { createCheckoutSession, createPortalSession, getBillingMe, getPlans, getUsage, schedulePlanSwitch } from "../../api/billing";
 import { BillingPlan, SubscriptionSummary, UsageSummary } from "../../types";
 import { formatDate } from "../documents/status";
 import { UsageMeters } from "./UsageMeter";
@@ -308,12 +308,12 @@ export function BillingPage({ api }: BillingPageProps) {
                     {plan.interval && !isCurrent && hasActivePaidSubscription && !isCurrentPlanCanceling ? (
                       <button
                         type="button"
-                        onClick={() => void redirectTo(() => switchPlan(api as ApiClient, plan.id), `switch-${plan.id}`)}
+                        onClick={() => void redirectTo(() => createPortalSession(api as ApiClient), `portal-${plan.id}`)}
                         disabled={pendingPlanId !== null}
                         className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-teal-100 px-4 text-sm font-semibold text-ink transition hover:border-sea hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {pendingPlanId === `switch-${plan.id}` ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <CreditCard size={17} aria-hidden="true" />}
-                        Choose this plan
+                        {pendingPlanId === `portal-${plan.id}` ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <CreditCard size={17} aria-hidden="true" />}
+                        Switch in billing portal
                       </button>
                     ) : null}
                     {plan.interval && !isCurrent && !hasActivePaidSubscription ? (
@@ -340,3 +340,4 @@ export function BillingPage({ api }: BillingPageProps) {
     </main>
   );
 }
+

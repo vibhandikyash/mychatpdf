@@ -230,14 +230,14 @@ export function ChatView({ chat, messages, isLoading = false, onSendMessage, onR
 
             {messages.map((message) => {
               const isUserMessage = message.role === "user";
-
+              const hasTable = message.role === "assistant" && containsMarkdownTable(message.content);
               return (
                 <article
                   key={message.id}
                   className={
                     isUserMessage
                       ? "ml-auto w-fit max-w-[62%] rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-slate-900 shadow-sm"
-                      : "mr-auto flex max-w-[78ch] items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-ink shadow-sm"
+                      : `mr-auto flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-ink shadow-sm ${hasTable ? "w-full max-w-5xl" : "max-w-[78ch]"}`
                   }
                 >
                   {isUserMessage ? null : (
@@ -303,16 +303,164 @@ export function ChatView({ chat, messages, isLoading = false, onSendMessage, onR
 }
 
 function FormattedChatMessage({ chat, message }: { chat: ChatSummary | null; message: ChatMessage }) {
-  const blocks = message.content.replace(/\r/g, "").split(/\n{2,}/).filter((block) => block.trim());
+  const blocks = parseChatMessageBlocks(message.content);
   const textClassName = message.role === "user" ? "text-slate-900" : "text-ink";
 
   return (
-    <div className={`space-y-3 break-words text-sm leading-6 ${textClassName}`}>
-      {blocks.map((block, index) => (
-        <p key={index} className="whitespace-pre-wrap">
-          {renderInlineText(block, `message-${message.id}-${index}`, chat, message.sources ?? [])}
-        </p>
-      ))}
+    <div className={`min-w-0 flex-1 space-y-3 break-words text-sm leading-6 ${textClassName}`}>
+      {blocks.map((block, index) => {
+        if (block.type === "table") {
+          return (
+            <MarkdownTable
+              key={`table-${index}`}
+              block={block}
+              chat={chat}
+              keyPrefix={`message-${message.id}-${index}`}
+              sources={message.sources ?? []}
+            />
+          );
+        }
+
+        return (
+          <p key={`paragraph-${index}`} className="whitespace-pre-wrap">
+            {renderInlineText(block.text, `message-${message.id}-${index}`, chat, message.sources ?? [])}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+type ChatMessageBlock = { type: "paragraph"; text: string } | { type: "table"; header: string[]; rows: string[][] };
+
+function containsMarkdownTable(content: string) {
+  const lines = content.replace(/\r/g, "").split("\n");
+  return lines.some((_, index) => parseMarkdownTable(lines, index) !== null);
+}
+
+function parseChatMessageBlocks(content: string): ChatMessageBlock[] {
+  const lines = content.replace(/\r/g, "").split("\n");
+  const blocks: ChatMessageBlock[] = [];
+  const paragraphLines: string[] = [];
+  let index = 0;
+
+  function flushParagraph() {
+    const text = paragraphLines.join("\n").trim();
+    if (text) {
+      blocks.push({ type: "paragraph", text });
+    }
+    paragraphLines.length = 0;
+  }
+
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      flushParagraph();
+      index += 1;
+      continue;
+    }
+
+    const table = parseMarkdownTable(lines, index);
+    if (table) {
+      flushParagraph();
+      blocks.push({ type: "table", header: table.header, rows: table.rows });
+      index = table.nextIndex;
+      continue;
+    }
+
+    paragraphLines.push(line.trimEnd());
+    index += 1;
+  }
+
+  flushParagraph();
+  return blocks;
+}
+
+function parseMarkdownTable(lines: string[], startIndex: number) {
+  const header = parseMarkdownTableRow(lines[startIndex] ?? "");
+  if (!header || !isMarkdownTableSeparator(lines[startIndex + 1] ?? "")) {
+    return null;
+  }
+
+  const rows: string[][] = [];
+  let index = startIndex + 2;
+  while (index < lines.length) {
+    const row = parseMarkdownTableRow(lines[index]);
+    if (!row || isMarkdownTableSeparator(lines[index])) {
+      break;
+    }
+    rows.push(normalizeTableRow(row, header.length));
+    index += 1;
+  }
+
+  if (!rows.length) {
+    return null;
+  }
+
+  return { header, rows, nextIndex: index };
+}
+
+function parseMarkdownTableRow(line: string): string[] | null {
+  const trimmedLine = line.trim();
+  if (!trimmedLine.includes("|")) {
+    return null;
+  }
+
+  const normalizedLine = trimmedLine.replace(/^\|/, "").replace(/\|$/, "");
+  const cells = normalizedLine.split("|").map((cell) => cell.trim());
+  return cells.length >= 2 ? cells : null;
+}
+
+function isMarkdownTableSeparator(line: string) {
+  const cells = parseMarkdownTableRow(line);
+  return Boolean(cells?.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s/g, ""))));
+}
+
+function normalizeTableRow(row: string[], columnCount: number) {
+  if (row.length === columnCount) {
+    return row;
+  }
+  if (row.length < columnCount) {
+    return [...row, ...Array.from({ length: columnCount - row.length }, () => "")];
+  }
+  return [...row.slice(0, columnCount - 1), row.slice(columnCount - 1).join(" | ")];
+}
+
+function MarkdownTable({
+  block,
+  chat,
+  keyPrefix,
+  sources
+}: {
+  block: Extract<ChatMessageBlock, { type: "table" }>;
+  chat: ChatSummary | null;
+  keyPrefix: string;
+  sources: Citation[];
+}) {
+  return (
+    <div className="max-w-full overflow-x-auto rounded-lg border border-slate-200">
+      <table className="min-w-full border-collapse text-left text-sm leading-5" aria-label="Comparison table">
+        <thead className="bg-slate-50 text-slate-700">
+          <tr>
+            {block.header.map((cell, cellIndex) => (
+              <th key={`${keyPrefix}-head-${cellIndex}`} scope="col" className="border-b border-slate-200 px-3 py-2 font-semibold align-top">
+                {renderInlineText(cell, `${keyPrefix}-head-${cellIndex}`, chat, sources)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-200">
+          {block.rows.map((row, rowIndex) => (
+            <tr key={`${keyPrefix}-row-${rowIndex}`} className="odd:bg-white even:bg-slate-50/50">
+              {row.map((cell, cellIndex) => (
+                <td key={`${keyPrefix}-cell-${rowIndex}-${cellIndex}`} className="min-w-44 px-3 py-2 align-top text-slate-700">
+                  {renderInlineText(cell, `${keyPrefix}-cell-${rowIndex}-${cellIndex}`, chat, sources)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -469,3 +617,4 @@ function findSourceForPage(sources: Citation[], pageStart: number, pageEnd: numb
     overlappingSources[0]
   );
 }
+
