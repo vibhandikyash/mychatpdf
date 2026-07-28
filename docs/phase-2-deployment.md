@@ -41,7 +41,7 @@ Without the Stripe variables the app runs normally: billing endpoints return 503
 
 ## 3. Stripe setup
 
-1. In the Stripe dashboard create one product ("MyChatPDF Pro") with two recurring prices: monthly and yearly. Put the price ids in `STRIPE_PRICE_PRO_MONTHLY` / `STRIPE_PRICE_PRO_YEARLY`.
+1. In the Stripe dashboard create one product ("MyPDFChat Pro") with two recurring prices: monthly and yearly. Put the price ids in `STRIPE_PRICE_PRO_MONTHLY` / `STRIPE_PRICE_PRO_YEARLY`.
 2. Enable the customer Billing Portal (Settings, Billing, Customer portal) and allow plan switches and cancellation. Upgrades, downgrades, proration, and cancellation all happen in the portal; the app has no custom UI for them by design.
 3. Register a webhook endpoint for `https://<api-host>/api/webhooks/stripe` with events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`. Put its signing secret in `STRIPE_WEBHOOK_SECRET`.
 4. Verify before go-live with the CLI: `stripe listen --forward-to localhost:8000/api/webhooks/stripe` then `stripe trigger customer.subscription.created`. Subscription state in the DB is written only by webhooks, so this path must work.
