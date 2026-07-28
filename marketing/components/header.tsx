@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import Logo from "@/components/logo";
+import Logo, { PRODUCT_NAME } from "@/components/logo";
 import CapsuleNav from "@/components/capsule-nav";
 import { APP_URL, type SiteSettings } from "@/lib/cms";
 
@@ -118,11 +118,11 @@ export default function Header({ settings }: { settings: SiteSettings }) {
 
             <Link
               href="/"
-              aria-label={`${settings.siteName} home`}
+              aria-label={`${PRODUCT_NAME} home`}
               onClick={closeMenu}
               className="shrink-0"
             >
-              <Logo siteName={settings.siteName} />
+              <Logo />
             </Link>
 
             <CapsuleNav items={settings.navItems} pathname={pathname} className="hidden lg:flex" />
@@ -177,8 +177,8 @@ export default function Header({ settings }: { settings: SiteSettings }) {
         }`}
       >
         <div className="flex shrink-0 items-center justify-between px-9 py-3 sm:px-11">
-          <Link href="/" aria-label={`${settings.siteName} home`} onClick={closeMenu}>
-            <Logo siteName={settings.siteName} />
+          <Link href="/" aria-label={`${PRODUCT_NAME} home`} onClick={closeMenu}>
+            <Logo />
           </Link>
           <button
             type="button"

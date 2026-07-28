@@ -140,7 +140,29 @@ function resolveLinks(entry: CdaEntry, field: string, response: CdaResponse): Cd
     .filter((e): e is CdaEntry => Boolean(e));
 }
 
-const f = <T>(entry: CdaEntry) => entry.fields as T;
+// Contentful previously used the old product-name order in several entries.
+// Normalize delivered display copy so stale CMS content cannot reintroduce it.
+function normalizeBrand<T>(value: T): T {
+  if (typeof value === "string") {
+    return value
+      .replace(/\bMyChatPDF\b/g, "MyPDFChat")
+      .replace(/\bMy Chat PDF\b/g, "MyPDFChat")
+      .replace(/\bMy PDF Chat\b/g, "MyPDFChat")
+      .replace(/\bMyPdfChat\b/g, "MyPDFChat")
+      .replace(/\bMyPDFchat\b/g, "MyPDFChat") as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeBrand(item)) as T;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, normalizeBrand(item)])
+    ) as T;
+  }
+  return value;
+}
+
+const f = <T>(entry: CdaEntry) => normalizeBrand(entry.fields) as T;
 
 // ---------------------------------------------------------------------------
 // Fallback content (used without CMS creds or before the space is seeded)

@@ -1,6 +1,6 @@
 import Link from "next/link";
-import Image from "next/image";
 import { MailIcon, MapPinIcon, PhoneIcon } from "@/components/icons";
+import Logo from "@/components/logo";
 import type { SiteSettings } from "@/lib/cms";
 
 export default function Footer({ settings }: { settings: SiteSettings }) {
@@ -17,9 +17,8 @@ export default function Footer({ settings }: { settings: SiteSettings }) {
       <div className="relative mx-auto max-w-7xl px-4 pt-14 pb-32 sm:px-6 md:pb-14">
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
           <div>
-            <span className="inline-flex items-center gap-2.5">
-              <Image src="/logo-mark.png" alt="" width={32} height={32} className="h-8 w-8" />
-              <span className="text-lg font-bold tracking-tight text-white">{settings.siteName}</span>
+            <span className="inline-flex rounded-lg bg-white px-2 py-1">
+              <Logo className="h-9 w-auto" />
             </span>
             {settings.tagline && <p className="mt-3 text-sm leading-relaxed text-slate-400">{settings.tagline}</p>}
             <div className="mt-5 space-y-2.5 text-sm text-slate-400">
