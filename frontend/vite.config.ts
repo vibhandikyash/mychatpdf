@@ -15,6 +15,7 @@ export default defineConfig(({ mode }) => {
   const apiProxyTarget = env.VITE_DEV_API_PROXY_TARGET;
 
   return {
+    base: mode === "production" ? "/app/" : "/",
     envDir: workspaceRoot,
     plugins: [react()],
     server: {

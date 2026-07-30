@@ -66,6 +66,7 @@ services:
   frontend:
     build:
       context: ./frontend
+      target: development
     env_file:
       - .env
     environment:
