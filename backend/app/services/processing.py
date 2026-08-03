@@ -19,6 +19,7 @@ from app.services.vector import DOCUMENT_INTELLIGENCE_SOURCE_LIMIT, VectorServic
 logger = logging.getLogger(__name__)
 DEFAULT_CHUNK_TARGET_TOKENS = 1000
 DEFAULT_CHUNK_OVERLAP_TOKENS = 150
+UNEXPECTED_PROCESSING_ERROR_CODE = "processing_error"
 
 
 class NoExtractableTextError(RuntimeError):
@@ -46,6 +47,11 @@ def _text_tokens(text: str) -> list[str]:
     return re.findall(r"\S+", text)
 
 
+def _sanitize_extracted_text(text: str) -> str:
+    """Remove characters that PostgreSQL cannot store in text columns."""
+    return text.replace("\x00", "")
+
+
 def chunk_pages(
     document: Document,
     pages: list[ExtractedPage],
@@ -56,7 +62,7 @@ def chunk_pages(
     chunks: list[DocumentChunk] = []
     chunk_index = 0
     for page in pages:
-        tokens = _text_tokens(page.text)
+        tokens = _text_tokens(_sanitize_extracted_text(page.text))
         if not tokens:
             continue
 
@@ -122,6 +128,42 @@ def _fail_max_pages(db: Session, document: Document, job: ProcessingJob, page_co
     _fail_job(db, document, job, "max_pdf_pages_exceeded", message)
 
 
+def _unexpected_failure_message(step: str) -> str:
+    if step == "extracting":
+        return "We couldn't read this document. Please retry. If it fails again, upload another copy."
+    if step == "chunking":
+        return "We couldn't prepare the extracted text for search. Please retry this document."
+    if step in {"embedding", "indexing", "analyzing"}:
+        return "We couldn't build the document search index. Please retry this document."
+    return "We couldn't finish processing this document. Please retry. If the problem continues, contact support."
+
+
+def _record_unexpected_failure(
+    db: Session,
+    document_id: UUID,
+    job_id: UUID,
+    step: str,
+) -> None:
+    # A failed flush leaves the session unusable until it is rolled back. Load
+    # fresh model instances afterward so the failure state can be committed.
+    db.rollback()
+    document = db.get(Document, document_id)
+    job = db.get(ProcessingJob, job_id)
+    if document is None or job is None:
+        logger.error(
+            "Could not record document processing failure",
+            extra={"document_id": str(document_id), "processing_job_id": str(job_id)},
+        )
+        return
+    _fail_job(
+        db,
+        document,
+        job,
+        UNEXPECTED_PROCESSING_ERROR_CODE,
+        _unexpected_failure_message(step),
+    )
+
+
 def process_document(
     db: Session,
     document_id: UUID,
@@ -142,13 +184,40 @@ def process_document(
     job.current_step = "extracting"
     db.commit()
 
+    document_id = document.id
+    job_id = job.id
+
     try:
-        pages = extractor.extract_pages(document)
-    except NoExtractableTextError as error:
-        # An image-only document over the page cap is a page-cap failure, not
-        # a no-text one; check the cap first so the failure code matches.
-        page_count = document.page_count or error.page_count
-        if max_pdf_pages is not None and page_count and page_count > max_pdf_pages:
+        try:
+            pages = extractor.extract_pages(document)
+        except NoExtractableTextError as error:
+            # An image-only document over the page cap is a page-cap failure, not
+            # a no-text one; check the cap first so the failure code matches.
+            page_count = document.page_count or error.page_count
+            if max_pdf_pages is not None and page_count and page_count > max_pdf_pages:
+                logger.info(
+                    "Document exceeded page limit",
+                    extra={
+                        "document_id": str(document.id),
+                        "page_count": page_count,
+                        "max_pdf_pages": max_pdf_pages,
+                    },
+                )
+                _fail_max_pages(db, document, job, page_count, max_pdf_pages)
+                raise MaxPagesExceededError("max pdf pages exceeded") from error
+            logger.info("Document has no extractable text", extra={"document_id": str(document.id)})
+            _fail_no_text(db, document, job)
+            raise
+        except UnsupportedFileError as error:
+            logger.info(
+                "Document file could not be parsed",
+                extra={"document_id": str(document.id), "format": document.format},
+            )
+            _fail_unsupported_file(db, document, job, str(error))
+            raise
+
+        page_count = document.page_count or len(pages)
+        if max_pdf_pages is not None and page_count > max_pdf_pages:
             logger.info(
                 "Document exceeded page limit",
                 extra={
@@ -158,76 +227,67 @@ def process_document(
                 },
             )
             _fail_max_pages(db, document, job, page_count, max_pdf_pages)
-            raise MaxPagesExceededError("max pdf pages exceeded") from error
-        logger.info("Document has no extractable text", extra={"document_id": str(document.id)})
-        _fail_no_text(db, document, job)
-        raise
-    except UnsupportedFileError as error:
-        logger.info(
-            "Document file could not be parsed",
-            extra={"document_id": str(document.id), "format": document.format},
-        )
-        _fail_unsupported_file(db, document, job, str(error))
-        raise
+            raise MaxPagesExceededError("max pdf pages exceeded")
 
-    page_count = document.page_count or len(pages)
-    if max_pdf_pages is not None and page_count > max_pdf_pages:
-        logger.info(
-            "Document exceeded page limit",
-            extra={
-                "document_id": str(document.id),
-                "page_count": page_count,
-                "max_pdf_pages": max_pdf_pages,
-            },
-        )
-        _fail_max_pages(db, document, job, page_count, max_pdf_pages)
-        raise MaxPagesExceededError("max pdf pages exceeded")
+        pages = [
+            ExtractedPage(page_number=page.page_number, text=_sanitize_extracted_text(page.text))
+            for page in pages
+        ]
+        pages = [page for page in pages if page.text.strip()]
+        if not pages:
+            logger.info("Document has no extractable text", extra={"document_id": str(document.id)})
+            _fail_no_text(db, document, job)
+            raise NoExtractableTextError("no extractable text")
 
-    pages = [page for page in pages if page.text.strip()]
-    if not pages:
-        logger.info("Document has no extractable text", extra={"document_id": str(document.id)})
-        _fail_no_text(db, document, job)
-        raise NoExtractableTextError("no extractable text")
-
-    document.status = DocumentStatus.CHUNKING
-    job.current_step = "chunking"
-    document.insight_payload = None
-    document.insight_generated_at = None
-    db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))
-    chunks = chunk_pages(document, pages)
-    db.add_all(chunks)
-    document.chunk_count = len(chunks)
-    db.commit()
-
-    document.status = DocumentStatus.EMBEDDING
-    job.current_step = "embedding"
-    vectors = vector_service.embed_texts([chunk.text for chunk in chunks])
-    db.commit()
-
-    document.status = DocumentStatus.INDEXING
-    job.current_step = "indexing"
-    vector_service.upsert_document_chunks(document.user, document, chunks, vectors)
-
-    insight_generator = getattr(vector_service, "generate_document_insight", None)
-    if callable(insight_generator):
-        job.current_step = "analyzing"
+        document.status = DocumentStatus.CHUNKING
+        job.current_step = "chunking"
+        document.insight_payload = None
+        document.insight_generated_at = None
+        db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))
+        chunks = chunk_pages(document, pages)
+        db.add_all(chunks)
+        document.chunk_count = len(chunks)
         db.commit()
-        try:
-            insight_payload = insight_generator(
-                build_overview_sources(chunks, limit=DOCUMENT_INTELLIGENCE_SOURCE_LIMIT)
-            )
-        except Exception:
-            logger.exception("Document insight generation failed", extra={"document_id": str(document.id)})
-        else:
-            if insight_payload:
-                document.insight_payload = insight_payload
-                document.insight_generated_at = utc_now()
 
-    document.status = DocumentStatus.READY
-    document.failure_code = None
-    document.failure_message = None
-    document.processed_at = utc_now()
-    job.status = ProcessingJobStatus.SUCCEEDED
-    job.current_step = "ready"
-    job.finished_at = utc_now()
-    db.commit()
+        document.status = DocumentStatus.EMBEDDING
+        job.current_step = "embedding"
+        vectors = vector_service.embed_texts([chunk.text for chunk in chunks])
+        db.commit()
+
+        document.status = DocumentStatus.INDEXING
+        job.current_step = "indexing"
+        vector_service.upsert_document_chunks(document.user, document, chunks, vectors)
+
+        insight_generator = getattr(vector_service, "generate_document_insight", None)
+        if callable(insight_generator):
+            job.current_step = "analyzing"
+            db.commit()
+            try:
+                insight_payload = insight_generator(
+                    build_overview_sources(chunks, limit=DOCUMENT_INTELLIGENCE_SOURCE_LIMIT)
+                )
+            except Exception:
+                logger.exception("Document insight generation failed", extra={"document_id": str(document.id)})
+            else:
+                if insight_payload:
+                    document.insight_payload = insight_payload
+                    document.insight_generated_at = utc_now()
+
+        document.status = DocumentStatus.READY
+        document.failure_code = None
+        document.failure_message = None
+        document.processed_at = utc_now()
+        job.status = ProcessingJobStatus.SUCCEEDED
+        job.current_step = "ready"
+        job.finished_at = utc_now()
+        db.commit()
+    except (NoExtractableTextError, UnsupportedFileError, MaxPagesExceededError):
+        raise
+    except Exception:
+        failed_step = job.current_step or "processing"
+        logger.exception(
+            "Document processing failed unexpectedly",
+            extra={"document_id": str(document_id), "processing_step": failed_step},
+        )
+        _record_unexpected_failure(db, document_id, job_id, failed_step)
+        raise

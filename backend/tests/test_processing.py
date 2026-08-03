@@ -40,6 +40,11 @@ class TextExtractor:
         ]
 
 
+class NulTextExtractor:
+    def extract_pages(self, _document):
+        return [ExtractedPage(page_number=1, text="Text before\x00text after")]
+
+
 class TooManyPagesExtractor:
     def extract_pages(self, _document):
         return [
@@ -64,6 +69,11 @@ class RecordingVectorService:
                 "vector_count": len(vectors),
             }
         )
+
+
+class FailingEmbeddingVectorService(RecordingVectorService):
+    def embed_texts(self, _texts):
+        raise RuntimeError("private provider failure details")
 
 
 class InsightVectorService(RecordingVectorService):
@@ -239,6 +249,53 @@ def test_text_processing_stores_chunks_indexes_vectors_and_marks_ready(db_sessio
             "vector_count": 2,
         }
     ]
+
+
+def test_processing_removes_nul_characters_before_storing_chunks(db_session):
+    document, job = _document_with_job(db_session, "user_nul_text")
+    vector_service = RecordingVectorService()
+
+    process_document(
+        db_session,
+        document.id,
+        extractor=NulTextExtractor(),
+        vector_service=vector_service,
+    )
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+    chunk = db_session.query(DocumentChunk).filter_by(document_id=document.id).one()
+
+    assert document.status == DocumentStatus.READY
+    assert job.status == ProcessingJobStatus.SUCCEEDED
+    assert "\x00" not in chunk.text
+    assert chunk.text == "Text beforetext after"
+    assert "\x00" not in chunk.text_excerpt
+
+
+def test_unexpected_processing_error_marks_document_and_job_failed(db_session):
+    document, job = _document_with_job(db_session, "user_unexpected_failure")
+
+    with pytest.raises(RuntimeError, match="private provider failure details"):
+        process_document(
+            db_session,
+            document.id,
+            extractor=TextExtractor(),
+            vector_service=FailingEmbeddingVectorService(),
+        )
+
+    db_session.refresh(document)
+    db_session.refresh(job)
+
+    assert document.status == DocumentStatus.FAILED
+    assert document.failure_code == "processing_error"
+    assert document.failure_message == "We couldn't build the document search index. Please retry this document."
+    assert "private provider failure details" not in document.failure_message
+    assert job.status == ProcessingJobStatus.FAILED
+    assert job.current_step == "failed"
+    assert job.error_code == "processing_error"
+    assert job.error_message == document.failure_message
+    assert job.finished_at is not None
 
 
 def test_text_processing_stores_document_insight_cache(db_session):
