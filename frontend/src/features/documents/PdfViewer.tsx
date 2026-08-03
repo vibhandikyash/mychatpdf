@@ -17,7 +17,9 @@ import { clampPage, createNativePdfUrl, readPdfSelection } from "./pdfSelection"
 import { isProcessingStatus } from "./status";
 import { usePdfPageScroll } from "./usePdfPageScroll";
 
-pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+// The query keeps the worker cache key independent from past server MIME
+// configuration, so clients that cached a rejected module recover immediately.
+pdfjs.GlobalWorkerOptions.workerSrc = `${workerSrc}?module=1`;
 
 interface PdfViewerProps {
   document: WorkspaceDocument;
