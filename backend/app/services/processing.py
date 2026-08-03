@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CHUNK_TARGET_TOKENS = 1000
 DEFAULT_CHUNK_OVERLAP_TOKENS = 150
 UNEXPECTED_PROCESSING_ERROR_CODE = "processing_error"
+UNSAFE_CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 class NoExtractableTextError(RuntimeError):
@@ -48,8 +49,8 @@ def _text_tokens(text: str) -> list[str]:
 
 
 def _sanitize_extracted_text(text: str) -> str:
-    """Remove characters that PostgreSQL cannot store in text columns."""
-    return text.replace("\x00", "")
+    """Remove unsafe control characters while preserving normal whitespace."""
+    return UNSAFE_CONTROL_CHARACTERS.sub("", text)
 
 
 def chunk_pages(

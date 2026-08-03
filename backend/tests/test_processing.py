@@ -42,7 +42,7 @@ class TextExtractor:
 
 class NulTextExtractor:
     def extract_pages(self, _document):
-        return [ExtractedPage(page_number=1, text="Text before\x00text after")]
+        return [ExtractedPage(page_number=1, text="Text before\x00\x01text after\nnext line")]
 
 
 class TooManyPagesExtractor:
@@ -269,8 +269,10 @@ def test_processing_removes_nul_characters_before_storing_chunks(db_session):
     assert document.status == DocumentStatus.READY
     assert job.status == ProcessingJobStatus.SUCCEEDED
     assert "\x00" not in chunk.text
-    assert chunk.text == "Text beforetext after"
+    assert "\x01" not in chunk.text
+    assert chunk.text == "Text beforetext after next line"
     assert "\x00" not in chunk.text_excerpt
+    assert "\x01" not in chunk.text_excerpt
 
 
 def test_unexpected_processing_error_marks_document_and_job_failed(db_session):
