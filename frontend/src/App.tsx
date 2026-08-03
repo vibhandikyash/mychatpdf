@@ -51,6 +51,7 @@ import {
 } from "./types";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
 const e2eAuthBypassEnabled = import.meta.env.VITE_E2E_AUTH_BYPASS === "true";
 const clerkAuthEnabled = Boolean(clerkPublishableKey) && !e2eAuthBypassEnabled;
 const PROCESSING_POLL_MS = 2500;
@@ -193,6 +194,7 @@ export function App() {
   return (
     <ClerkProvider
       publishableKey={activeClerkPublishableKey}
+      proxyUrl={clerkProxyUrl || undefined}
       routerPush={(to) => navigate(toRouterPath(to))}
       routerReplace={(to) => navigate(toRouterPath(to), { replace: true })}
       signInUrl={signInUrl}
